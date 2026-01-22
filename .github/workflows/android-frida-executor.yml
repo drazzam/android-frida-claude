@@ -1,4 +1,4 @@
-name: Ultimate Android Security Testing Platform
+name: Android Security Testing - Complete Toolkit
 
 on:
   workflow_dispatch:
@@ -24,52 +24,40 @@ on:
           - '30'
           - '31'
           - '33'
-          - '34'
       server_port:
         description: 'Remote executor server port'
         required: true
         default: '8000'
-      enable_root:
-        description: 'Enable root access in emulator'
+      enable_advanced_tools:
+        description: 'Install advanced deobfuscation tools (adds ~3min)'
         required: true
         default: 'true'
-        type: choice
-        options:
-          - 'true'
-          - 'false'
+        type: boolean
+
+env:
+  ANDROID_AVD_HOME: /home/runner/.android/avd
+  ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
+  ANDROID_HOME: /usr/local/lib/android/sdk
+  ANDROID_NDK_HOME: /usr/local/lib/android/sdk/ndk/25.2.9519653
+  JAVA_HOME: /usr/lib/jvm/temurin-17-jdk-amd64
+  GRADLE_HOME: /usr/share/gradle
+  ADB_DEVICE: localhost:5555
 
 jobs:
-  android-security-platform:
+  android-security-toolkit:
     runs-on: ubuntu-latest
     timeout-minutes: 65
-
-    env:
-      ANDROID_AVD_HOME: /home/runner/.android/avd
-      ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
-      ANDROID_HOME: /usr/local/lib/android/sdk
-      JAVA_HOME: /usr/lib/jvm/temurin-17-jdk-amd64
-      # Tool versions
-      FRIDA_VERSION: "17.0.5"
-      APKTOOL_VERSION: "2.9.3"
-      JADX_VERSION: "1.5.0"
-      GHIDRA_VERSION: "11.0.3"
-      UBER_APK_SIGNER_VERSION: "1.3.0"
-      BUNDLETOOL_VERSION: "1.15.6"
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      #########################################
-      # PHASE 1: SYSTEM PREPARATION
-      #########################################
-      
       - name: Enable KVM acceleration
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
-          echo "✅ KVM enabled"
+          echo "✅ KVM enabled:"
           ls -la /dev/kvm
 
       - name: Setup Java 17
@@ -83,974 +71,617 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Setup Node.js (for some tools)
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-
-      #########################################
-      # PHASE 2: INSTALL ALL SYSTEM DEPENDENCIES
-      #########################################
-
-      - name: Install comprehensive system dependencies
+      - name: Install Core System Dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            build-essential \
-            cmake \
-            git \
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq \
             wget \
             curl \
             unzip \
-            p7zip-full \
-            zipalign \
-            apksigner \
-            aapt \
-            adb \
-            android-tools-adb \
-            android-sdk-platform-tools-common \
+            zip \
+            git \
+            jq \
+            build-essential \
+            cmake \
+            pkg-config \
             libssl-dev \
             libffi-dev \
             libxml2-dev \
             libxslt1-dev \
-            libjpeg-dev \
             zlib1g-dev \
+            libjpeg-dev \
             libpng-dev \
-            libfreetype6-dev \
-            liblcms2-dev \
-            libopenjp2-7-dev \
-            libtiff5-dev \
-            libwebp-dev \
-            tcl8.6-dev \
-            tk8.6-dev \
-            python3-tk \
-            libncurses5-dev \
-            libncursesw5-dev \
-            libreadline-dev \
-            libsqlite3-dev \
-            libbz2-dev \
-            liblzma-dev \
-            libgdbm-dev \
-            libdb5.3-dev \
-            uuid-dev \
-            libfuse2 \
-            fuse3 \
-            squashfs-tools \
-            qemu-user-static \
-            binfmt-support \
-            binutils \
-            binutils-multiarch \
-            file \
-            xxd \
-            hexedit \
-            protobuf-compiler \
-            libprotobuf-dev \
-            libcapstone-dev \
-            libcapstone4 \
-            radare2 \
-            rizin \
-            nasm \
-            yasm \
-            smali \
-            baksmali \
-            default-jdk \
-            maven \
-            gradle \
-            ant \
+            android-tools-adb \
+            android-tools-fastboot \
+            aapt \
+            apksigner \
+            zipalign \
+            openjdk-17-jdk \
+            graphviz \
             libc6-i386 \
             lib32stdc++6 \
-            lib32z1 \
-            expect \
-            sshpass \
-            socat \
-            netcat-openbsd \
-            nmap \
-            tcpdump \
-            wireshark-common \
-            tshark \
-            mitmproxy \
-            proxychains4 \
-            tor \
-            libmagic1 \
-            python3-magic \
-            upx-ucl \
-            patchelf
-          echo "✅ System dependencies installed"
+            lib32z1
+          echo "✅ Core system dependencies installed"
 
-      #########################################
-      # PHASE 3: INSTALL PYTHON SECURITY TOOLS
-      #########################################
+      - name: Install Android SDK Build Tools
+        run: |
+          # Install multiple build-tools versions for compatibility
+          yes | sdkmanager --install "build-tools;34.0.0" 2>/dev/null || true
+          yes | sdkmanager --install "build-tools;33.0.2" 2>/dev/null || true
+          yes | sdkmanager --install "build-tools;30.0.3" 2>/dev/null || true
+          
+          # Add to PATH - prefer newer versions
+          echo "$ANDROID_HOME/build-tools/34.0.0" >> $GITHUB_PATH
+          echo "$ANDROID_HOME/build-tools/33.0.2" >> $GITHUB_PATH
+          echo "$ANDROID_HOME/build-tools/30.0.3" >> $GITHUB_PATH
+          
+          # Verify tools
+          echo "✅ Android SDK Build Tools installed:"
+          ls -la $ANDROID_HOME/build-tools/
+          
+          # Test aapt2
+          $ANDROID_HOME/build-tools/34.0.0/aapt2 version || echo "aapt2 34 not available"
+          $ANDROID_HOME/build-tools/33.0.2/aapt2 version || echo "aapt2 33 not available"
 
-      - name: Install comprehensive Python security tools
+      - name: Install Python Security Tools
         run: |
           pip install --upgrade pip setuptools wheel
-
-          # Core Frida ecosystem
-          pip install \
-            frida-tools==${FRIDA_VERSION} \
-            frida==${FRIDA_VERSION} \
-            objection \
-            r2pipe
-
-          # APK Analysis
-          pip install \
-            androguard \
-            apkid \
-            quark-engine \
-            androwarn \
-            exodus-core
-
-          # Web/API framework
           pip install \
             fastapi \
             uvicorn[standard] \
-            python-multipart \
+            pyngrok \
             httpx \
-            aiohttp \
             aiofiles \
-            websockets
-
-          # Network/Proxy tools
-          pip install \
-            mitmproxy \
-            scapy \
-            requests \
-            urllib3
-
-          # Crypto analysis
-          pip install \
-            pycryptodome \
+            psutil \
+            python-multipart \
+            pydantic \
+            frida-tools \
+            frida \
+            objection \
+            lief \
+            androguard \
+            apkid \
+            quark-engine \
             cryptography \
-            pyOpenSSL
-
-          # Binary analysis
-          pip install \
+            pycryptodome \
             capstone \
             keystone-engine \
             unicorn \
-            lief \
-            pyelftools \
-            pefile
-
-          # Utilities
-          pip install \
-            psutil \
-            colorama \
-            tqdm \
-            tabulate \
-            jinja2 \
-            pyyaml \
-            toml \
-            xmltodict \
-            beautifulsoup4 \
-            lxml
-
-          # Decompilation helpers
-          pip install \
-            uncompyle6 \
-            decompyle3 \
-            xdis
-
+            r2pipe \
+            yara-python
           echo "✅ Python security tools installed"
-          echo "Frida version: $(frida --version)"
-          echo "Objection version: $(objection version)"
+          
+          # Verify installations
+          echo "Tool versions:"
+          frida --version
+          objection version || echo "objection version check skipped"
+          apkid --version || echo "apkid installed"
 
-      #########################################
-      # PHASE 4: INSTALL ADVANCED ANDROID TOOLS
-      #########################################
-
-      - name: Install Android SDK components
+      - name: Install APKTool
         run: |
-          # Accept all licenses
-          yes | sdkmanager --licenses || true
+          # Install latest apktool
+          APKTOOL_VERSION="2.9.3"
+          sudo wget -q "https://github.com/iBotPeaches/Apktool/releases/download/v${APKTOOL_VERSION}/apktool_${APKTOOL_VERSION}.jar" \
+            -O /usr/local/bin/apktool.jar
+          sudo wget -q "https://raw.githubusercontent.com/iBotPeaches/Apktool/master/scripts/linux/apktool" \
+            -O /usr/local/bin/apktool
+          sudo chmod +x /usr/local/bin/apktool
           
-          # Install comprehensive SDK components
-          sdkmanager --install \
-            "platform-tools" \
-            "build-tools;34.0.0" \
-            "build-tools;33.0.2" \
-            "build-tools;30.0.3" \
-            "platforms;android-${{ inputs.android_api }}" \
-            "system-images;android-${{ inputs.android_api }};google_apis;x86_64" \
-            "emulator" \
-            "cmdline-tools;latest" \
-            "ndk;26.1.10909125" \
-            "cmake;3.22.1"
-          
-          # Add build-tools to PATH
-          echo "$ANDROID_HOME/build-tools/34.0.0" >> $GITHUB_PATH
-          echo "$ANDROID_HOME/platform-tools" >> $GITHUB_PATH
-          echo "$ANDROID_HOME/emulator" >> $GITHUB_PATH
-          echo "$ANDROID_HOME/cmdline-tools/latest/bin" >> $GITHUB_PATH
-          
-          echo "✅ Android SDK components installed"
-
-      - name: Download and install APKTool (latest)
-        run: |
-          mkdir -p ~/tools/apktool
-          cd ~/tools/apktool
-          
-          # Download latest apktool
-          wget -q "https://raw.githubusercontent.com/iBotPeaches/Apktool/master/scripts/linux/apktool"
-          wget -q "https://bitbucket.org/iBotPeaches/apktool/downloads/apktool_${APKTOOL_VERSION}.jar" -O apktool.jar
-          
-          chmod +x apktool
-          sudo mv apktool /usr/local/bin/
-          sudo mv apktool.jar /usr/local/bin/
-          
-          echo "✅ APKTool ${APKTOOL_VERSION} installed"
+          # Verify
           apktool --version
+          echo "✅ APKTool $APKTOOL_VERSION installed"
 
-      - name: Download and install JADX (advanced decompiler)
+      - name: Install JADX Decompiler
         run: |
-          mkdir -p ~/tools/jadx
-          cd ~/tools/jadx
+          JADX_VERSION="1.5.0"
+          wget -q "https://github.com/skylot/jadx/releases/download/v${JADX_VERSION}/jadx-${JADX_VERSION}.zip" \
+            -O /tmp/jadx.zip
+          sudo unzip -q /tmp/jadx.zip -d /opt/jadx
+          sudo ln -sf /opt/jadx/bin/jadx /usr/local/bin/jadx
+          sudo ln -sf /opt/jadx/bin/jadx-gui /usr/local/bin/jadx-gui
+          rm /tmp/jadx.zip
           
-          wget -q "https://github.com/skylot/jadx/releases/download/v${JADX_VERSION}/jadx-${JADX_VERSION}.zip"
-          unzip -q jadx-${JADX_VERSION}.zip
-          
-          sudo ln -sf ~/tools/jadx/bin/jadx /usr/local/bin/jadx
-          sudo ln -sf ~/tools/jadx/bin/jadx-gui /usr/local/bin/jadx-gui
-          
-          echo "✅ JADX ${JADX_VERSION} installed"
+          # Verify
           jadx --version
+          echo "✅ JADX $JADX_VERSION installed"
 
-      - name: Download and install dex2jar
+      - name: Install Dex2Jar
         run: |
-          mkdir -p ~/tools/dex2jar
-          cd ~/tools/dex2jar
-          
-          wget -q "https://github.com/pxb1988/dex2jar/releases/download/v2.4/dex-tools-v2.4.zip"
-          unzip -q dex-tools-v2.4.zip
-          mv dex-tools-v2.4/* .
-          rmdir dex-tools-v2.4
-          
-          chmod +x *.sh
-          sudo ln -sf ~/tools/dex2jar/d2j-dex2jar.sh /usr/local/bin/d2j-dex2jar
-          sudo ln -sf ~/tools/dex2jar/d2j-jar2dex.sh /usr/local/bin/d2j-jar2dex
-          sudo ln -sf ~/tools/dex2jar/d2j-apk-sign.sh /usr/local/bin/d2j-apk-sign
-          
-          echo "✅ dex2jar installed"
+          DEX2JAR_VERSION="2.4"
+          wget -q "https://github.com/pxb1988/dex2jar/releases/download/v${DEX2JAR_VERSION}/dex-tools-v${DEX2JAR_VERSION}.zip" \
+            -O /tmp/dex2jar.zip
+          sudo unzip -q /tmp/dex2jar.zip -d /opt/
+          sudo mv /opt/dex-tools-v${DEX2JAR_VERSION} /opt/dex2jar
+          sudo chmod +x /opt/dex2jar/*.sh
+          sudo ln -sf /opt/dex2jar/d2j-dex2jar.sh /usr/local/bin/d2j-dex2jar
+          sudo ln -sf /opt/dex2jar/d2j-jar2dex.sh /usr/local/bin/d2j-jar2dex
+          rm /tmp/dex2jar.zip
+          echo "✅ Dex2Jar $DEX2JAR_VERSION installed"
 
-      - name: Download and install Uber APK Signer
+      - name: Install Smali/Baksmali
         run: |
-          mkdir -p ~/tools/uber-apk-signer
-          cd ~/tools/uber-apk-signer
+          SMALI_VERSION="2.5.2"
+          sudo wget -q "https://github.com/JesusFreke/smali/releases/download/v${SMALI_VERSION}/smali-${SMALI_VERSION}.jar" \
+            -O /usr/local/bin/smali.jar
+          sudo wget -q "https://github.com/JesusFreke/smali/releases/download/v${SMALI_VERSION}/baksmali-${SMALI_VERSION}.jar" \
+            -O /usr/local/bin/baksmali.jar
           
-          wget -q "https://github.com/patrickfav/uber-apk-signer/releases/download/v${UBER_APK_SIGNER_VERSION}/uber-apk-signer-${UBER_APK_SIGNER_VERSION}.jar" -O uber-apk-signer.jar
+          # Create wrapper scripts
+          echo '#!/bin/bash' | sudo tee /usr/local/bin/smali
+          echo 'java -jar /usr/local/bin/smali.jar "$@"' | sudo tee -a /usr/local/bin/smali
+          sudo chmod +x /usr/local/bin/smali
           
-          # Create wrapper script
-          cat > /tmp/uber-apk-signer << 'EOF'
-#!/bin/bash
-java -jar ~/tools/uber-apk-signer/uber-apk-signer.jar "$@"
-EOF
-          chmod +x /tmp/uber-apk-signer
-          sudo mv /tmp/uber-apk-signer /usr/local/bin/
+          echo '#!/bin/bash' | sudo tee /usr/local/bin/baksmali
+          echo 'java -jar /usr/local/bin/baksmali.jar "$@"' | sudo tee -a /usr/local/bin/baksmali
+          sudo chmod +x /usr/local/bin/baksmali
           
-          echo "✅ Uber APK Signer installed"
+          echo "✅ Smali/Baksmali $SMALI_VERSION installed"
 
-      - name: Download and install Bundletool
+      - name: Install Radare2
         run: |
-          mkdir -p ~/tools/bundletool
-          cd ~/tools/bundletool
+          # Install radare2 from package (faster)
+          sudo apt-get install -y -qq radare2
           
-          wget -q "https://github.com/google/bundletool/releases/download/${BUNDLETOOL_VERSION}/bundletool-all-${BUNDLETOOL_VERSION}.jar" -O bundletool.jar
-          
-          cat > /tmp/bundletool << 'EOF'
-#!/bin/bash
-java -jar ~/tools/bundletool/bundletool.jar "$@"
-EOF
-          chmod +x /tmp/bundletool
-          sudo mv /tmp/bundletool /usr/local/bin/
-          
-          echo "✅ Bundletool installed"
+          # Verify
+          r2 -v
+          echo "✅ Radare2 installed"
 
-      - name: Download and install Simplify (deobfuscator)
+      - name: Install CFR Java Decompiler
         run: |
-          mkdir -p ~/tools/simplify
-          cd ~/tools/simplify
+          CFR_VERSION="0.152"
+          sudo wget -q "https://github.com/leibnitz27/cfr/releases/download/${CFR_VERSION}/cfr-${CFR_VERSION}.jar" \
+            -O /usr/local/bin/cfr.jar
           
-          wget -q "https://github.com/CalebFenton/simplify/releases/download/v1.3.0/simplify-1.3.0.jar" -O simplify.jar
-          
-          cat > /tmp/simplify << 'EOF'
-#!/bin/bash
-java -jar ~/tools/simplify/simplify.jar "$@"
-EOF
-          chmod +x /tmp/simplify
-          sudo mv /tmp/simplify /usr/local/bin/
-          
-          echo "✅ Simplify deobfuscator installed"
+          echo '#!/bin/bash' | sudo tee /usr/local/bin/cfr
+          echo 'java -jar /usr/local/bin/cfr.jar "$@"' | sudo tee -a /usr/local/bin/cfr
+          sudo chmod +x /usr/local/bin/cfr
+          echo "✅ CFR $CFR_VERSION installed"
 
-      - name: Download and install CFR (Java decompiler)
+      - name: Install Procyon Decompiler
         run: |
-          mkdir -p ~/tools/cfr
-          cd ~/tools/cfr
+          PROCYON_VERSION="0.6.0"
+          sudo wget -q "https://github.com/mstrobel/procyon/releases/download/v${PROCYON_VERSION}/procyon-decompiler-${PROCYON_VERSION}.jar" \
+            -O /usr/local/bin/procyon.jar
           
-          wget -q "https://github.com/leibnitz27/cfr/releases/download/0.152/cfr-0.152.jar" -O cfr.jar
-          
-          cat > /tmp/cfr << 'EOF'
-#!/bin/bash
-java -jar ~/tools/cfr/cfr.jar "$@"
-EOF
-          chmod +x /tmp/cfr
-          sudo mv /tmp/cfr /usr/local/bin/
-          
-          echo "✅ CFR decompiler installed"
+          echo '#!/bin/bash' | sudo tee /usr/local/bin/procyon
+          echo 'java -jar /usr/local/bin/procyon.jar "$@"' | sudo tee -a /usr/local/bin/procyon
+          sudo chmod +x /usr/local/bin/procyon
+          echo "✅ Procyon $PROCYON_VERSION installed"
 
-      - name: Download and install Procyon (Java decompiler)
+      - name: Install Enjarify (Google's dex2jar alternative)
         run: |
-          mkdir -p ~/tools/procyon
-          cd ~/tools/procyon
-          
-          wget -q "https://github.com/mstrobel/procyon/releases/download/v0.6.0/procyon-decompiler-0.6.0.jar" -O procyon.jar
-          
-          cat > /tmp/procyon << 'EOF'
-#!/bin/bash
-java -jar ~/tools/procyon/procyon.jar "$@"
-EOF
-          chmod +x /tmp/procyon
-          sudo mv /tmp/procyon /usr/local/bin/
-          
-          echo "✅ Procyon decompiler installed"
-
-      - name: Download and install Fernflower (IntelliJ decompiler)
-        run: |
-          mkdir -p ~/tools/fernflower
-          cd ~/tools/fernflower
-          
-          # Build fernflower from source (most up-to-date)
-          git clone --depth 1 https://github.com/fesh0r/fernflower.git src
-          cd src
-          ./gradlew build -x test || true
-          cp build/libs/fernflower.jar ../fernflower.jar || wget -q "https://jitpack.io/com/github/fesh0r/fernflower/master-SNAPSHOT/fernflower-master-SNAPSHOT.jar" -O ../fernflower.jar
-          cd ..
-          
-          cat > /tmp/fernflower << 'EOF'
-#!/bin/bash
-java -jar ~/tools/fernflower/fernflower.jar "$@"
-EOF
-          chmod +x /tmp/fernflower
-          sudo mv /tmp/fernflower /usr/local/bin/
-          
-          echo "✅ Fernflower decompiler installed"
-
-      - name: Download and install Enjarify (dex to jar - better than dex2jar)
-        run: |
-          mkdir -p ~/tools
-          cd ~/tools
-          
-          git clone --depth 1 https://github.com/Storyyeller/enjarify.git
-          cd enjarify
-          
-          sudo ln -sf ~/tools/enjarify/enjarify.sh /usr/local/bin/enjarify
-          
+          git clone --depth 1 https://github.com/Storyyeller/enjarify.git /tmp/enjarify
+          sudo mv /tmp/enjarify /opt/enjarify
+          sudo ln -sf /opt/enjarify/enjarify.sh /usr/local/bin/enjarify
           echo "✅ Enjarify installed"
 
-      - name: Download and install ByteCode Viewer
+      - name: Install Advanced Tools (DexGuard/Obfuscation)
+        if: ${{ inputs.enable_advanced_tools == 'true' }}
         run: |
-          mkdir -p ~/tools/bytecode-viewer
-          cd ~/tools/bytecode-viewer
+          echo "📦 Installing advanced deobfuscation tools..."
           
-          wget -q "https://github.com/Konloch/bytecode-viewer/releases/download/v2.12/Bytecode-Viewer-2.12.jar" -O bytecode-viewer.jar
-          
-          cat > /tmp/bytecode-viewer << 'EOF'
-#!/bin/bash
-java -jar ~/tools/bytecode-viewer/bytecode-viewer.jar "$@"
-EOF
-          chmod +x /tmp/bytecode-viewer
-          sudo mv /tmp/bytecode-viewer /usr/local/bin/
-          
-          echo "✅ ByteCode Viewer installed"
-
-      #########################################
-      # PHASE 5: INSTALL DEXGUARD/OBFUSCATION TOOLS
-      #########################################
-
-      - name: Install DexGuard/ProGuard analysis tools
-        run: |
-          mkdir -p ~/tools/deobfuscation
-          cd ~/tools/deobfuscation
-          
-          # JEB Scripts for DexGuard (open source alternatives)
-          git clone --depth 1 https://github.com/pnfsoftware/jeb-plugin-libra.git || true
-          
-          # Dexcalibur - automated Frida hook generation
-          npm install -g dexcalibur || true
-          
-          # APKiD patterns for detecting protections
-          pip install apkid
-          
-          echo "✅ Deobfuscation tools installed"
-
-      - name: Install Native Binary Analysis Tools
-        run: |
-          # Radare2 is already installed, configure it
-          r2pm init || true
-          r2pm update || true
-          r2pm -ci r2ghidra || true
-          r2pm -ci r2frida || true
-          r2pm -ci r2dec || true
-          
-          # Install Ghidra (headless mode)
-          mkdir -p ~/tools/ghidra
-          cd ~/tools/ghidra
-          
-          wget -q "https://github.com/NationalSecurityAgency/ghidra/releases/download/Ghidra_${GHIDRA_VERSION}_build/ghidra_${GHIDRA_VERSION}_PUBLIC_20240410.zip" -O ghidra.zip || \
-          wget -q "https://github.com/NationalSecurityAgency/ghidra/releases/download/Ghidra_11.0.3_build/ghidra_11.0.3_PUBLIC_20240410.zip" -O ghidra.zip
-          
-          unzip -q ghidra.zip || true
-          
-          if [ -d "ghidra_${GHIDRA_VERSION}_PUBLIC" ]; then
-            sudo ln -sf ~/tools/ghidra/ghidra_${GHIDRA_VERSION}_PUBLIC/support/analyzeHeadless /usr/local/bin/analyzeHeadless
+          # Simplify - Android deobfuscator
+          git clone --depth 1 https://github.com/CalebFenton/simplify.git /tmp/simplify || true
+          if [ -d "/tmp/simplify" ]; then
+            cd /tmp/simplify
+            ./gradlew fatjar 2>/dev/null || echo "Simplify build skipped"
+            if [ -f "simplify/build/libs/simplify.jar" ]; then
+              sudo cp simplify/build/libs/simplify.jar /usr/local/bin/
+              echo '#!/bin/bash' | sudo tee /usr/local/bin/simplify
+              echo 'java -jar /usr/local/bin/simplify.jar "$@"' | sudo tee -a /usr/local/bin/simplify
+              sudo chmod +x /usr/local/bin/simplify
+              echo "✅ Simplify installed"
+            fi
           fi
           
-          echo "✅ Native binary analysis tools installed"
+          # JD-CLI - Java Decompiler CLI
+          JD_VERSION="1.2.1"
+          wget -q "https://github.com/intoolswetrust/jd-cli/releases/download/jd-cli-${JD_VERSION}/jd-cli-${JD_VERSION}-dist.zip" \
+            -O /tmp/jd-cli.zip || true
+          if [ -f "/tmp/jd-cli.zip" ]; then
+            sudo unzip -q /tmp/jd-cli.zip -d /opt/jd-cli
+            sudo chmod +x /opt/jd-cli/jd-cli
+            sudo ln -sf /opt/jd-cli/jd-cli /usr/local/bin/jd-cli
+            echo "✅ JD-CLI installed"
+          fi
+          
+          # ByteCodeViewer
+          BCV_VERSION="2.12"
+          wget -q "https://github.com/Konloch/bytecode-viewer/releases/download/v${BCV_VERSION}/Bytecode-Viewer-${BCV_VERSION}.jar" \
+            -O /usr/local/bin/bytecode-viewer.jar 2>/dev/null || true
+          if [ -f "/usr/local/bin/bytecode-viewer.jar" ]; then
+            echo "✅ ByteCode Viewer installed"
+          fi
+          
+          echo "✅ Advanced tools installation complete"
 
-      - name: Install Frida Server and Gadgets for all architectures
+      - name: Create Frida Scripts Library
         run: |
-          mkdir -p ~/tools/frida-server
-          mkdir -p ~/tools/frida-gadget
-          cd ~/tools/frida-server
-          
-          FRIDA_RELEASE="17.0.5"
-          
-          # Download Frida server for all Android architectures
-          for arch in arm arm64 x86 x86_64; do
-            echo "Downloading frida-server for $arch..."
-            wget -q "https://github.com/frida/frida/releases/download/${FRIDA_RELEASE}/frida-server-${FRIDA_RELEASE}-android-${arch}.xz" -O frida-server-${arch}.xz
-            xz -d frida-server-${arch}.xz
-            chmod +x frida-server-${arch}
-          done
-          
-          cd ~/tools/frida-gadget
-          
-          # Download Frida gadgets for all architectures
-          for arch in arm arm64 x86 x86_64; do
-            echo "Downloading frida-gadget for $arch..."
-            wget -q "https://github.com/frida/frida/releases/download/${FRIDA_RELEASE}/frida-gadget-${FRIDA_RELEASE}-android-${arch}.so.xz" -O frida-gadget-${arch}.so.xz
-            xz -d frida-gadget-${arch}.so.xz
-          done
-          
-          echo "✅ Frida servers and gadgets downloaded for all architectures"
-          ls -la ~/tools/frida-server/
-          ls -la ~/tools/frida-gadget/
-
-      - name: Install Advanced Frida Scripts Collection
-        run: |
-          mkdir -p ~/tools/frida-scripts
-          cd ~/tools/frida-scripts
-          
-          # Clone major Frida script repositories
-          git clone --depth 1 https://github.com/frida/frida-java-bridge.git || true
-          git clone --depth 1 https://github.com/sensepost/objection.git objection-src || true
-          git clone --depth 1 https://github.com/m0bilesecurity/Frida-Mobile-Scripts.git || true
-          git clone --depth 1 https://github.com/iddoeldor/frida-snippets.git || true
-          git clone --depth 1 https://github.com/WithSecureLabs/android-keystore-audit.git || true
-          git clone --depth 1 https://github.com/FSecureLABS/android-keystore-audit.git fsecure-keystore || true
-          git clone --depth 1 https://github.com/pich4ya/frida-android-libbinder.git || true
-          git clone --depth 1 https://github.com/interference-security/frida-scripts.git interference-scripts || true
-          git clone --depth 1 https://github.com/apkunpacker/FridaScripts.git apkunpacker-scripts || true
-          git clone --depth 1 https://github.com/poxyran/misc.git poxyran-misc || true
-          git clone --depth 1 https://github.com/AeonLucid/frida-android-helper.git || true
-          
-          # Download specific popular scripts
-          mkdir -p universal
-          cd universal
+          mkdir -p /tmp/frida-scripts
           
           # Universal SSL Pinning Bypass
-          wget -q "https://raw.githubusercontent.com/httptoolkit/frida-android-unpinning/main/frida-script.js" -O ssl-pinning-bypass-universal.js || true
-          wget -q "https://codeshare.frida.re/@pcipolloni/universal-android-ssl-pinning-bypass-with-frida/raw" -O ssl-bypass-2.js || true
-          wget -q "https://codeshare.frida.re/@akabe1/frida-multiple-unpinning/raw" -O multiple-unpinning.js || true
+          cat > /tmp/frida-scripts/ssl_bypass_universal.js << 'SSLEOF'
+          /*
+           * Universal SSL Pinning Bypass
+           * Supports: OkHttp, Retrofit, HttpURLConnection, WebView,
+           * TrustManager, TrustKit, Appcelerator, Flutter, Xamarin
+           */
+          Java.perform(function() {
+              console.log("[*] Universal SSL Bypass Loading...");
+              
+              // TrustManager Bypass
+              try {
+                  var TrustManager = Java.registerClass({
+                      name: 'com.bypass.TrustManager',
+                      implements: [Java.use('javax.net.ssl.X509TrustManager')],
+                      methods: {
+                          checkClientTrusted: function(chain, authType) {},
+                          checkServerTrusted: function(chain, authType) {},
+                          getAcceptedIssuers: function() { return []; }
+                      }
+                  });
+                  var SSLContext = Java.use('javax.net.ssl.SSLContext');
+                  SSLContext.init.overload('[Ljavax.net.ssl.KeyManager;', '[Ljavax.net.ssl.TrustManager;', 'java.security.SecureRandom')
+                      .implementation = function(km, tm, sr) {
+                          console.log("[+] SSLContext.init bypassed");
+                          this.init(km, [TrustManager.$new()], sr);
+                      };
+              } catch(e) { console.log("[-] TrustManager: " + e); }
+              
+              // OkHttp3 CertificatePinner
+              try {
+                  var CertPinner = Java.use('okhttp3.CertificatePinner');
+                  CertPinner.check.overload('java.lang.String', 'java.util.List').implementation = function(h, p) {
+                      console.log("[+] OkHttp3 pin bypassed: " + h);
+                  };
+                  CertPinner.check.overload('java.lang.String', '[Ljava.security.cert.Certificate;').implementation = function(h, p) {
+                      console.log("[+] OkHttp3 pin bypassed: " + h);
+                  };
+              } catch(e) {}
+              
+              // OkHttp3 Builder
+              try {
+                  var Builder = Java.use('okhttp3.OkHttpClient$Builder');
+                  Builder.certificatePinner.implementation = function(p) {
+                      console.log("[+] OkHttp3 Builder.certificatePinner bypassed");
+                      return this;
+                  };
+              } catch(e) {}
+              
+              // TrustKit
+              try {
+                  var TrustKit = Java.use('com.datatheorem.android.trustkit.pinning.OkHostnameVerifier');
+                  TrustKit.verify.overload('java.lang.String', 'javax.net.ssl.SSLSession').implementation = function(h, s) {
+                      console.log("[+] TrustKit bypassed: " + h);
+                      return true;
+                  };
+              } catch(e) {}
+              
+              // HostnameVerifier
+              try {
+                  var HV = Java.use('javax.net.ssl.HostnameVerifier');
+                  var HVImpl = Java.registerClass({
+                      name: 'com.bypass.HostnameVerifier',
+                      implements: [HV],
+                      methods: {
+                          verify: function(h, s) { return true; }
+                      }
+                  });
+              } catch(e) {}
+              
+              // WebView SSL
+              try {
+                  var WebViewClient = Java.use('android.webkit.WebViewClient');
+                  WebViewClient.onReceivedSslError.implementation = function(view, handler, error) {
+                      console.log("[+] WebView SSL error bypassed");
+                      handler.proceed();
+                  };
+              } catch(e) {}
+              
+              // Network Security Config
+              try {
+                  var NSC = Java.use('android.security.net.config.NetworkSecurityConfig');
+                  NSC.isCleartextTrafficPermitted.overload().implementation = function() { return true; };
+                  NSC.isCleartextTrafficPermitted.overload('java.lang.String').implementation = function(h) { return true; };
+              } catch(e) {}
+              
+              console.log("[*] Universal SSL Bypass Active!");
+          });
+          SSLEOF
           
           # Root Detection Bypass
-          wget -q "https://codeshare.frida.re/@dzonerzy/fridantiroot/raw" -O root-bypass-fridantiroot.js || true
+          cat > /tmp/frida-scripts/root_bypass_universal.js << 'ROOTEOF'
+          /*
+           * Universal Root Detection Bypass
+           * Supports: RootBeer, SafetyNet, common detection methods
+           */
+          Java.perform(function() {
+              console.log("[*] Root Detection Bypass Loading...");
+              
+              // Common file checks
+              var RootFiles = [
+                  "/system/app/Superuser.apk", "/system/xbin/su", "/system/bin/su",
+                  "/sbin/su", "/data/local/xbin/su", "/data/local/bin/su",
+                  "/system/sd/xbin/su", "/system/bin/failsafe/su",
+                  "/data/local/su", "/su/bin/su", "/su/bin", "/magisk"
+              ];
+              
+              // File.exists bypass
+              try {
+                  var File = Java.use('java.io.File');
+                  File.exists.implementation = function() {
+                      var path = this.getAbsolutePath();
+                      for (var i = 0; i < RootFiles.length; i++) {
+                          if (path === RootFiles[i] || path.indexOf("magisk") !== -1 || 
+                              path.indexOf("supersu") !== -1 || path.indexOf("busybox") !== -1) {
+                              console.log("[+] File.exists blocked: " + path);
+                              return false;
+                          }
+                      }
+                      return this.exists();
+                  };
+              } catch(e) {}
+              
+              // RootBeer
+              try {
+                  var RootBeer = Java.use('com.scottyab.rootbeer.RootBeer');
+                  RootBeer.isRooted.implementation = function() {
+                      console.log("[+] RootBeer.isRooted bypassed");
+                      return false;
+                  };
+                  RootBeer.isRootedWithoutBusyBoxCheck.implementation = function() { return false; };
+                  RootBeer.detectRootManagementApps.implementation = function() { return false; };
+                  RootBeer.detectPotentiallyDangerousApps.implementation = function() { return false; };
+                  RootBeer.detectTestKeys.implementation = function() { return false; };
+                  RootBeer.checkForBusyBoxBinary.implementation = function() { return false; };
+                  RootBeer.checkForSuBinary.implementation = function() { return false; };
+                  RootBeer.checkSuExists.implementation = function() { return false; };
+                  RootBeer.checkForRWPaths.implementation = function() { return false; };
+                  RootBeer.checkForDangerousProps.implementation = function() { return false; };
+                  RootBeer.checkForRootNative.implementation = function() { return false; };
+                  RootBeer.detectRootCloakingApps.implementation = function() { return false; };
+                  RootBeer.isSelinuxFlagInEnabled.implementation = function() { return true; };
+              } catch(e) {}
+              
+              // Runtime.exec bypass for su checks
+              try {
+                  var Runtime = Java.use('java.lang.Runtime');
+                  var execOrig = Runtime.exec.overload('java.lang.String');
+                  execOrig.implementation = function(cmd) {
+                      if (cmd.indexOf("su") !== -1 || cmd.indexOf("which") !== -1) {
+                          console.log("[+] Runtime.exec blocked: " + cmd);
+                          throw new Error("Command not found");
+                      }
+                      return execOrig.call(this, cmd);
+                  };
+              } catch(e) {}
+              
+              // System.getProperty
+              try {
+                  var System = Java.use('java.lang.System');
+                  System.getProperty.overload('java.lang.String').implementation = function(key) {
+                      if (key === "ro.build.tags") {
+                          return "release-keys";
+                      }
+                      return this.getProperty(key);
+                  };
+              } catch(e) {}
+              
+              // Block System.exit for anti-tamper
+              try {
+                  var SystemExit = Java.use('java.lang.System');
+                  SystemExit.exit.implementation = function(code) {
+                      console.log("[+] System.exit(" + code + ") blocked!");
+                  };
+              } catch(e) {}
+              
+              console.log("[*] Root Detection Bypass Active!");
+          });
+          ROOTEOF
           
           # Anti-Debug Bypass
-          wget -q "https://codeshare.frida.re/@pich4ya/android-anti-debug-bypass/raw" -O anti-debug-bypass.js || true
+          cat > /tmp/frida-scripts/anti_debug_bypass.js << 'DEBUGEOF'
+          /*
+           * Anti-Debugging Bypass
+           * Bypasses: ptrace, Debug.isDebuggerConnected, timing checks
+           */
+          Java.perform(function() {
+              console.log("[*] Anti-Debug Bypass Loading...");
+              
+              // Debug.isDebuggerConnected
+              try {
+                  var Debug = Java.use('android.os.Debug');
+                  Debug.isDebuggerConnected.implementation = function() {
+                      console.log("[+] Debug.isDebuggerConnected bypassed");
+                      return false;
+                  };
+                  Debug.waitingForDebugger.implementation = function() { return false; };
+              } catch(e) {}
+              
+              // ApplicationInfo flags
+              try {
+                  var ApplicationInfo = Java.use('android.content.pm.ApplicationInfo');
+                  ApplicationInfo.flags.value = 0;
+              } catch(e) {}
+              
+              // TracerPid check
+              try {
+                  var BufferedReader = Java.use('java.io.BufferedReader');
+                  BufferedReader.readLine.implementation = function() {
+                      var line = this.readLine();
+                      if (line && line.indexOf("TracerPid") !== -1) {
+                          return "TracerPid:\t0";
+                      }
+                      return line;
+                  };
+              } catch(e) {}
+              
+              console.log("[*] Anti-Debug Bypass Active!");
+          });
+          DEBUGEOF
           
-          echo "✅ Frida scripts collection installed"
+          # DexGuard String Decryption Helper
+          cat > /tmp/frida-scripts/dexguard_strings.js << 'DEXEOF'
+          /*
+           * DexGuard String Decryption Logger
+           * Logs decrypted strings at runtime
+           */
+          Java.perform(function() {
+              console.log("[*] DexGuard String Logger Loading...");
+              
+              // Hook String constructor to catch decrypted strings
+              try {
+                  var StringClass = Java.use('java.lang.String');
+                  StringClass.$init.overload('[B').implementation = function(bytes) {
+                      var result = StringClass.$new(bytes);
+                      if (bytes.length > 3 && bytes.length < 500) {
+                          console.log("[STRING] " + result);
+                      }
+                      return result;
+                  };
+                  StringClass.$init.overload('[B', 'java.lang.String').implementation = function(bytes, charset) {
+                      var result = StringClass.$new(bytes, charset);
+                      if (bytes.length > 3 && bytes.length < 500) {
+                          console.log("[STRING] " + result);
+                      }
+                      return result;
+                  };
+              } catch(e) {}
+              
+              // Hook StringBuilder for concatenated strings
+              try {
+                  var StringBuilder = Java.use('java.lang.StringBuilder');
+                  StringBuilder.toString.implementation = function() {
+                      var result = this.toString();
+                      if (result.length > 5 && result.length < 500) {
+                          if (result.indexOf("http") !== -1 || result.indexOf("key") !== -1 ||
+                              result.indexOf("token") !== -1 || result.indexOf("api") !== -1) {
+                              console.log("[BUILDER] " + result);
+                          }
+                      }
+                      return result;
+                  };
+              } catch(e) {}
+              
+              console.log("[*] DexGuard String Logger Active!");
+          });
+          DEXEOF
+          
+          # Network Traffic Monitor
+          cat > /tmp/frida-scripts/network_monitor.js << 'NETEOF'
+          /*
+           * Comprehensive Network Traffic Monitor
+           */
+          Java.perform(function() {
+              console.log("[*] Network Monitor Loading...");
+              
+              // URL connections
+              try {
+                  var URL = Java.use('java.net.URL');
+                  URL.openConnection.overload().implementation = function() {
+                      console.log("[URL] " + this.toString());
+                      return this.openConnection();
+                  };
+              } catch(e) {}
+              
+              // OkHttp
+              try {
+                  var Request = Java.use('okhttp3.Request');
+                  Request.url.implementation = function() {
+                      var url = this.url();
+                      console.log("[OkHttp] " + url.toString());
+                      return url;
+                  };
+              } catch(e) {}
+              
+              // Retrofit
+              try {
+                  var ServiceMethod = Java.use('retrofit2.ServiceMethod');
+                  ServiceMethod.invoke.implementation = function(args) {
+                      console.log("[Retrofit] Service method invoked");
+                      return this.invoke(args);
+                  };
+              } catch(e) {}
+              
+              console.log("[*] Network Monitor Active!");
+          });
+          NETEOF
+          
+          # Crypto Monitor
+          cat > /tmp/frida-scripts/crypto_monitor.js << 'CRYPTOEOF'
+          /*
+           * Cryptographic Operations Monitor
+           */
+          Java.perform(function() {
+              console.log("[*] Crypto Monitor Loading...");
+              
+              function toHex(bytes) {
+                  if (!bytes) return "null";
+                  var hex = [];
+                  for (var i = 0; i < Math.min(bytes.length, 32); i++) {
+                      hex.push(("0" + (bytes[i] & 0xFF).toString(16)).slice(-2));
+                  }
+                  return hex.join("") + (bytes.length > 32 ? "..." : "");
+              }
+              
+              // Cipher
+              try {
+                  var Cipher = Java.use('javax.crypto.Cipher');
+                  Cipher.getInstance.overload('java.lang.String').implementation = function(t) {
+                      console.log("[Cipher] " + t);
+                      return this.getInstance(t);
+                  };
+                  Cipher.doFinal.overload('[B').implementation = function(input) {
+                      console.log("[Cipher.doFinal] IN: " + toHex(input));
+                      var result = this.doFinal(input);
+                      console.log("[Cipher.doFinal] OUT: " + toHex(result));
+                      return result;
+                  };
+              } catch(e) {}
+              
+              // SecretKeySpec
+              try {
+                  var SecretKeySpec = Java.use('javax.crypto.spec.SecretKeySpec');
+                  SecretKeySpec.$init.overload('[B', 'java.lang.String').implementation = function(key, alg) {
+                      console.log("[KEY] " + alg + ": " + toHex(key));
+                      return this.$init(key, alg);
+                  };
+              } catch(e) {}
+              
+              // MessageDigest
+              try {
+                  var MD = Java.use('java.security.MessageDigest');
+                  MD.digest.overload('[B').implementation = function(input) {
+                      var result = this.digest(input);
+                      console.log("[Hash] " + this.getAlgorithm() + " -> " + toHex(result));
+                      return result;
+                  };
+              } catch(e) {}
+              
+              console.log("[*] Crypto Monitor Active!");
+          });
+          CRYPTOEOF
+          
+          echo "✅ Frida scripts library created"
+          ls -la /tmp/frida-scripts/
 
-      - name: Install DexGuard/iXGuard specific tools
+      - name: Install Android System Image
         run: |
-          mkdir -p ~/tools/dexguard-tools
-          cd ~/tools/dexguard-tools
-          
-          # Create comprehensive DexGuard detection and analysis scripts
-          cat > detect_dexguard.py << 'PYEOF'
-#!/usr/bin/env python3
-"""
-DexGuard Detection and Analysis Tool
-Detects DexGuard 8.x, 9.x and common protection patterns
-"""
+          yes | sdkmanager --install "system-images;android-${{ inputs.android_api }};google_apis;x86_64" 2>/dev/null || true
+          yes | sdkmanager --install "platforms;android-${{ inputs.android_api }}" 2>/dev/null || true
+          yes | sdkmanager --install "platform-tools" 2>/dev/null || true
+          echo "✅ Android system image installed"
 
-import sys
-import os
-import re
-import zipfile
-import hashlib
-from androguard.core.apk import APK
-from androguard.core.dex import DEX
-
-# DexGuard signatures and patterns
-DEXGUARD_SIGNATURES = {
-    "class_encryption": [
-        r"com\.guardsquare\.dexguard\.",
-        r"o\.a\.[a-z]{1,2}\.",
-        r"[a-z]\.(?:[a-z]\.){2,}[a-z]{1,2}$",
-    ],
-    "string_encryption": [
-        r"\.method.*getString\(I\)Ljava/lang/String;",
-        r"aput-byte",
-        r"new-array.*\[B",
-    ],
-    "native_libs": [
-        "libdexguard.so",
-        "libapp.so",
-        "libnative-lib.so",
-    ],
-    "resource_encryption": [
-        "assets/dexguard/",
-        "assets/guard/",
-    ],
-    "class_patterns": [
-        r"^[a-z]{1,2}$",
-        r"^[a-z]\.[a-z]$",
-        r"^[a-z]\.[a-z]\.[a-z]$",
-    ],
-}
-
-PROTECTION_DETECTORS = {
-    "DexGuard": ["com.guardsquare", "dexguard", "libdexguard"],
-    "ProGuard": ["-keep class", "-dontwarn", "-optimizations"],
-    "Allatori": ["com.allatori", "allatori"],
-    "DashO": ["com.preemptive", "dasho"],
-    "Arxan": ["com.arxan", "arxan"],
-    "Bangcle": ["com.secneo", "bangcle", "libsecmain.so"],
-    "Baidu": ["com.baidu.protect", "libbaiduprotect.so"],
-    "Tencent": ["libshell", "libBugly", "com.tencent.bugly"],
-    "Qihoo360": ["com.qihoo", "libjiagu", "libprotect"],
-    "APKProtect": ["com.apkprotect", "libAPKProtect"],
-    "Medusa": ["medusa"],
-    "AppSolid": ["com.appsolid"],
-    "Liapp": ["com.liapp", "libliapp.so"],
-    "Nagain": ["libarm-v7a.nagain.so"],
-    "Alibaba": ["com.alibaba.wireless.security", "libsgmain.so"],
-}
-
-def analyze_apk(apk_path):
-    """Comprehensive APK protection analysis"""
-    results = {
-        "file": apk_path,
-        "protections_detected": [],
-        "obfuscation_level": "unknown",
-        "encrypted_strings": False,
-        "encrypted_resources": False,
-        "native_protection": False,
-        "anti_debug": False,
-        "anti_root": False,
-        "anti_frida": False,
-        "ssl_pinning": False,
-        "details": {}
-    }
-    
-    try:
-        apk = APK(apk_path)
-        
-        # Check for protection-related native libraries
-        for f in apk.get_files():
-            for protection, signatures in PROTECTION_DETECTORS.items():
-                for sig in signatures:
-                    if sig.lower() in f.lower():
-                        if protection not in results["protections_detected"]:
-                            results["protections_detected"].append(protection)
-        
-        # Analyze DEX files
-        for dex_name in apk.get_dex_names():
-            dex_data = apk.get_file(dex_name)
-            
-            # Check for encrypted strings pattern
-            if b'\x00\x00\x00' in dex_data and dex_data.count(b'\x00\x00\x00') > 1000:
-                results["encrypted_strings"] = True
-            
-        # Check for anti-debugging
-        manifest = apk.get_android_manifest_xml()
-        if manifest:
-            manifest_str = str(manifest)
-            if 'android:debuggable="false"' in manifest_str:
-                results["anti_debug"] = True
-        
-        # Determine obfuscation level
-        if len(results["protections_detected"]) >= 2:
-            results["obfuscation_level"] = "heavy"
-        elif len(results["protections_detected"]) == 1:
-            results["obfuscation_level"] = "moderate"
-        elif results["encrypted_strings"]:
-            results["obfuscation_level"] = "light"
-        else:
-            results["obfuscation_level"] = "none"
-            
-    except Exception as e:
-        results["error"] = str(e)
-    
-    return results
-
-if __name__ == "__main__":
-    if len(sys.argv) < 2:
-        print("Usage: detect_dexguard.py <apk_path>")
-        sys.exit(1)
-    
-    import json
-    result = analyze_apk(sys.argv[1])
-    print(json.dumps(result, indent=2))
-PYEOF
-          chmod +x detect_dexguard.py
-          
-          # Create DexGuard string decryptor template
-          cat > dexguard_string_decrypt.js << 'JSEOF'
-/*
- * DexGuard String Decryption Hook
- * Automatically hooks string decryption methods
- */
-
-Java.perform(function() {
-    console.log("[*] DexGuard String Decryption Hook Active");
-    
-    var decryptedStrings = [];
-    
-    // Hook all classes that might contain string decryption
-    Java.enumerateLoadedClasses({
-        onMatch: function(className) {
-            // Look for short obfuscated class names (typical DexGuard pattern)
-            if (className.match(/^[a-z]\.[a-z]\.[a-z]$/) || 
-                className.match(/^[a-z]{1,2}$/)) {
-                try {
-                    var clazz = Java.use(className);
-                    var methods = clazz.class.getDeclaredMethods();
-                    
-                    methods.forEach(function(method) {
-                        var methodName = method.getName();
-                        var returnType = method.getReturnType().getName();
-                        
-                        // Hook methods that return String and take int/byte[] parameters
-                        if (returnType === "java.lang.String") {
-                            try {
-                                var overloads = clazz[methodName].overloads;
-                                overloads.forEach(function(overload) {
-                                    overload.implementation = function() {
-                                        var result = this[methodName].apply(this, arguments);
-                                        if (result && result.length > 0) {
-                                            var entry = {
-                                                class: className,
-                                                method: methodName,
-                                                args: Array.prototype.slice.call(arguments).toString(),
-                                                result: result.toString()
-                                            };
-                                            console.log("[DECRYPT] " + JSON.stringify(entry));
-                                            decryptedStrings.push(entry);
-                                        }
-                                        return result;
-                                    };
-                                });
-                            } catch(e) {}
-                        }
-                    });
-                } catch(e) {}
-            }
-        },
-        onComplete: function() {
-            console.log("[*] Class enumeration complete");
-        }
-    });
-    
-    // Export results
-    rpc.exports = {
-        getDecryptedStrings: function() {
-            return decryptedStrings;
-        }
-    };
-});
-JSEOF
-
-          # Create comprehensive anti-protection bypass
-          cat > universal_bypass.js << 'JSEOF'
-/*
- * Universal Protection Bypass for DexGuard 9.x and similar
- * Includes: Root, Debug, Frida, Emulator, SSL Pinning bypass
- */
-
-Java.perform(function() {
-    console.log("==========================================");
-    console.log("[*] Universal Protection Bypass v2.0");
-    console.log("[*] Supports: DexGuard, ProGuard, Arxan");
-    console.log("==========================================");
-
-    // ========== SYSTEM.EXIT BLOCKER ==========
-    try {
-        var System = Java.use("java.lang.System");
-        System.exit.implementation = function(code) {
-            console.log("[BLOCKED] System.exit(" + code + ")");
-        };
-        console.log("[+] System.exit() blocked");
-    } catch(e) { console.log("[-] System.exit hook failed"); }
-
-    // ========== PROCESS KILL BLOCKER ==========
-    try {
-        var Process = Java.use("android.os.Process");
-        Process.killProcess.implementation = function(pid) {
-            console.log("[BLOCKED] Process.killProcess(" + pid + ")");
-        };
-        console.log("[+] Process.killProcess() blocked");
-    } catch(e) {}
-
-    // ========== ROOT DETECTION BYPASS ==========
-    try {
-        var RootBeer = Java.use("com.scottyab.rootbeer.RootBeer");
-        RootBeer.isRooted.implementation = function() {
-            console.log("[BYPASS] RootBeer.isRooted() -> false");
-            return false;
-        };
-        RootBeer.isRootedWithoutBusyBoxCheck.implementation = function() {
-            return false;
-        };
-        console.log("[+] RootBeer bypassed");
-    } catch(e) {}
-
-    // Generic file existence checks
-    try {
-        var File = Java.use("java.io.File");
-        var originalExists = File.exists;
-        File.exists.implementation = function() {
-            var path = this.getAbsolutePath();
-            var rootPaths = ["/system/app/Superuser.apk", "/sbin/su", "/system/bin/su",
-                "/system/xbin/su", "/data/local/xbin/su", "/data/local/bin/su",
-                "/system/sd/xbin/su", "/system/bin/failsafe/su", "/data/local/su",
-                "/su/bin/su", "/magisk", "/sbin/.magisk", "/data/adb/magisk"];
-            
-            for (var i = 0; i < rootPaths.length; i++) {
-                if (path.indexOf(rootPaths[i]) !== -1) {
-                    console.log("[BYPASS] File.exists(" + path + ") -> false");
-                    return false;
-                }
-            }
-            return originalExists.call(this);
-        };
-        console.log("[+] Root file checks bypassed");
-    } catch(e) {}
-
-    // ========== FRIDA DETECTION BYPASS ==========
-    try {
-        // Bypass /proc/self/maps reading for frida detection
-        var BufferedReader = Java.use("java.io.BufferedReader");
-        BufferedReader.readLine.overload().implementation = function() {
-            var line = this.readLine();
-            if (line && (line.indexOf("frida") !== -1 || 
-                        line.indexOf("gadget") !== -1 ||
-                        line.indexOf("gum-js-loop") !== -1 ||
-                        line.indexOf("linjector") !== -1)) {
-                console.log("[BYPASS] Hiding Frida from maps: " + line.substring(0, 50));
-                return this.readLine(); // Skip this line
-            }
-            return line;
-        };
-        console.log("[+] Frida detection (maps) bypassed");
-    } catch(e) {}
-
-    // Bypass port scanning for frida-server
-    try {
-        var InetSocketAddress = Java.use("java.net.InetSocketAddress");
-        var Socket = Java.use("java.net.Socket");
-        Socket.connect.overload("java.net.SocketAddress", "int").implementation = function(addr, timeout) {
-            var address = addr.toString();
-            if (address.indexOf("27042") !== -1 || address.indexOf("27043") !== -1) {
-                console.log("[BYPASS] Blocking connection to Frida port: " + address);
-                throw Java.use("java.net.ConnectException").$new("Connection refused");
-            }
-            return this.connect(addr, timeout);
-        };
-        console.log("[+] Frida port detection bypassed");
-    } catch(e) {}
-
-    // ========== EMULATOR DETECTION BYPASS ==========
-    try {
-        var Build = Java.use("android.os.Build");
-        
-        Build.FINGERPRINT.value = "google/sailfish/sailfish:8.1.0/OPM1.171019.011/4448085:user/release-keys";
-        Build.MODEL.value = "Pixel";
-        Build.MANUFACTURER.value = "Google";
-        Build.BRAND.value = "google";
-        Build.DEVICE.value = "sailfish";
-        Build.PRODUCT.value = "sailfish";
-        Build.HARDWARE.value = "sailfish";
-        Build.BOARD.value = "sailfish";
-        Build.HOST.value = "wphr1.hot.corp.google.com";
-        
-        console.log("[+] Build properties spoofed (emulator bypass)");
-    } catch(e) {}
-
-    // ========== DEBUG DETECTION BYPASS ==========
-    try {
-        var Debug = Java.use("android.os.Debug");
-        Debug.isDebuggerConnected.implementation = function() {
-            console.log("[BYPASS] Debug.isDebuggerConnected() -> false");
-            return false;
-        };
-        console.log("[+] Debugger detection bypassed");
-    } catch(e) {}
-
-    try {
-        var ActivityManager = Java.use("android.app.ActivityManager");
-        ActivityManager.isUserAMonkey.implementation = function() {
-            return false;
-        };
-        console.log("[+] Monkey detection bypassed");
-    } catch(e) {}
-
-    // ========== SSL PINNING BYPASS ==========
-    
-    // TrustManager bypass
-    try {
-        var X509TrustManager = Java.use("javax.net.ssl.X509TrustManager");
-        var SSLContext = Java.use("javax.net.ssl.SSLContext");
-
-        var TrustManager = Java.registerClass({
-            name: "com.bypass.TrustManager",
-            implements: [X509TrustManager],
-            methods: {
-                checkClientTrusted: function(chain, authType) {},
-                checkServerTrusted: function(chain, authType) {},
-                getAcceptedIssuers: function() { return []; }
-            }
-        });
-
-        var TrustManagers = [TrustManager.$new()];
-        var SSLContextInit = SSLContext.init.overload(
-            "[Ljavax.net.ssl.KeyManager;",
-            "[Ljavax.net.ssl.TrustManager;",
-            "java.security.SecureRandom"
-        );
-        SSLContextInit.implementation = function(km, tm, sr) {
-            console.log("[BYPASS] SSLContext.init() - using custom TrustManager");
-            SSLContextInit.call(this, km, TrustManagers, sr);
-        };
-        console.log("[+] TrustManager SSL bypass installed");
-    } catch(e) {}
-
-    // OkHttp CertificatePinner bypass
-    try {
-        var CertificatePinner = Java.use("okhttp3.CertificatePinner");
-        CertificatePinner.check.overload("java.lang.String", "java.util.List").implementation = function(hostname, peerCerts) {
-            console.log("[BYPASS] OkHttp CertificatePinner: " + hostname);
-        };
-        CertificatePinner.check.overload("java.lang.String", "[Ljava.security.cert.Certificate;").implementation = function(hostname, certs) {
-            console.log("[BYPASS] OkHttp CertificatePinner (alt): " + hostname);
-        };
-        console.log("[+] OkHttp3 CertificatePinner bypassed");
-    } catch(e) {}
-
-    // OkHttp3 Builder bypass
-    try {
-        var Builder = Java.use("okhttp3.OkHttpClient$Builder");
-        Builder.certificatePinner.implementation = function(pinner) {
-            console.log("[BYPASS] OkHttpClient.Builder.certificatePinner()");
-            return this;
-        };
-        console.log("[+] OkHttp3 Builder bypass installed");
-    } catch(e) {}
-
-    // TrustManagerImpl (Android 7+)
-    try {
-        var TrustManagerImpl = Java.use("com.android.org.conscrypt.TrustManagerImpl");
-        TrustManagerImpl.verifyChain.implementation = function(untrusted, trustAnchor, host, clientAuth, ocsp, tlsSct) {
-            console.log("[BYPASS] TrustManagerImpl.verifyChain(): " + host);
-            return untrusted;
-        };
-        console.log("[+] TrustManagerImpl bypass installed");
-    } catch(e) {}
-
-    // Conscrypt (newer Android)
-    try {
-        var ConscryptTrustManager = Java.use("com.google.android.gms.org.conscrypt.TrustManagerImpl");
-        ConscryptTrustManager.checkServerTrusted.overload("[Ljava.security.cert.X509Certificate;", "java.lang.String").implementation = function(chain, authType) {
-            console.log("[BYPASS] Conscrypt TrustManager");
-        };
-    } catch(e) {}
-
-    // WebView SSL bypass
-    try {
-        var WebViewClient = Java.use("android.webkit.WebViewClient");
-        WebViewClient.onReceivedSslError.implementation = function(view, handler, error) {
-            console.log("[BYPASS] WebView SSL error ignored");
-            handler.proceed();
-        };
-        console.log("[+] WebView SSL bypass installed");
-    } catch(e) {}
-
-    // ========== TAMPERING DETECTION BYPASS ==========
-    try {
-        var PackageManager = Java.use("android.app.ApplicationPackageManager");
-        PackageManager.getPackageInfo.overload("java.lang.String", "int").implementation = function(pkg, flags) {
-            var info = this.getPackageInfo(pkg, flags);
-            // Could modify signature info here if needed
-            return info;
-        };
-    } catch(e) {}
-
-    // ========== DYNAMIC CLASS LOADING HOOKS ==========
-    try {
-        var DexClassLoader = Java.use("dalvik.system.DexClassLoader");
-        DexClassLoader.$init.implementation = function(dexPath, optDir, libPath, parent) {
-            console.log("[INFO] DexClassLoader loading: " + dexPath);
-            return this.$init(dexPath, optDir, libPath, parent);
-        };
-    } catch(e) {}
-
-    try {
-        var InMemoryDexClassLoader = Java.use("dalvik.system.InMemoryDexClassLoader");
-        InMemoryDexClassLoader.$init.overload("java.nio.ByteBuffer", "java.lang.ClassLoader").implementation = function(buf, parent) {
-            console.log("[INFO] InMemoryDexClassLoader - in-memory DEX detected!");
-            return this.$init(buf, parent);
-        };
-    } catch(e) {}
-
-    console.log("==========================================");
-    console.log("[*] All bypasses installed successfully!");
-    console.log("==========================================");
-});
-JSEOF
-
-          sudo mv detect_dexguard.py /usr/local/bin/
-          sudo mv dexguard_string_decrypt.js ~/tools/frida-scripts/
-          sudo mv universal_bypass.js ~/tools/frida-scripts/
-          
-          echo "✅ DexGuard analysis tools installed"
-
-      #########################################
-      # PHASE 6: CREATE ANDROID VIRTUAL DEVICE
-      #########################################
-
-      - name: Create Android Virtual Device (AVD)
+      - name: Create Android Virtual Device
         run: |
-          mkdir -p $ANDROID_AVD_HOME
-          
-          echo "📱 Creating AVD with API ${{ inputs.android_api }}..."
-          
+          mkdir -p $HOME/.android/avd
           echo "no" | avdmanager create avd \
             --force \
-            --name "frida_avd" \
+            --name "security_avd" \
             --package "system-images;android-${{ inputs.android_api }};google_apis;x86_64" \
             --device "pixel_4"
           
-          # Configure AVD for better performance
-          cat >> $ANDROID_AVD_HOME/frida_avd.avd/config.ini << EOF
-hw.ramSize=4096
-hw.gpu.enabled=yes
-hw.gpu.mode=swiftshader_indirect
-disk.dataPartition.size=8G
-vm.heapSize=576
-hw.keyboard=yes
-EOF
-          
-          echo "✅ AVD created and configured"
+          echo "✅ AVD created"
           avdmanager list avd
 
       - name: Setup ngrok
@@ -1059,1543 +690,846 @@ EOF
             sudo tee /etc/apt/trusted.gpg.d/ngrok.asc >/dev/null
           echo "deb https://ngrok-agent.s3.amazonaws.com buster main" | \
             sudo tee /etc/apt/sources.list.d/ngrok.list
-          sudo apt-get update && sudo apt-get install -y ngrok
+          sudo apt-get update -qq && sudo apt-get install -y -qq ngrok
           ngrok config add-authtoken ${{ secrets.NGROK_AUTH_TOKEN }}
           echo "✅ ngrok configured"
 
-      #########################################
-      # PHASE 7: START ANDROID EMULATOR
-      #########################################
-
       - name: Start Android Emulator
         run: |
-          echo "🚀 Starting emulator with KVM acceleration..."
+          echo "🚀 Starting emulator..."
           
-          echo "📋 Environment:"
-          echo "  ANDROID_AVD_HOME=$ANDROID_AVD_HOME"
-          echo "  ANDROID_HOME=$ANDROID_HOME"
-          
-          echo "📋 Available AVDs:"
-          $ANDROID_HOME/emulator/emulator -list-avds
-          
-          # Start emulator with optimized settings
-          $ANDROID_HOME/emulator/emulator -avd frida_avd \
+          $ANDROID_HOME/emulator/emulator -avd security_avd \
             -no-window \
             -no-audio \
             -no-boot-anim \
             -gpu swiftshader_indirect \
             -no-snapshot \
-            -wipe-data \
             -port 5554 \
-            -memory 4096 \
-            -cores 4 \
-            -no-metrics \
-            &
+            -memory 2048 &
           
           EMULATOR_PID=$!
           echo "EMULATOR_PID=$EMULATOR_PID" >> $GITHUB_ENV
           
-          echo "⏳ Waiting for emulator to boot..."
+          echo "⏳ Waiting for device..."
           adb wait-for-device
           
-          boot_timeout=300
-          boot_elapsed=0
+          echo "⏳ Waiting for boot..."
+          timeout=180
+          elapsed=0
           while [ "$(adb shell getprop sys.boot_completed 2>/dev/null)" != "1" ]; do
-            if [ $boot_elapsed -ge $boot_timeout ]; then
-              echo "❌ Boot timeout after ${boot_timeout}s"
+            if [ $elapsed -ge $timeout ]; then
+              echo "❌ Boot timeout"
               exit 1
             fi
             sleep 5
-            boot_elapsed=$((boot_elapsed + 5))
-            echo "  Boot progress: ${boot_elapsed}s..."
+            elapsed=$((elapsed + 5))
+            echo "  ${elapsed}s..."
           done
           
-          echo "✅ Emulator booted in ${boot_elapsed}s!"
+          echo "✅ Emulator booted in ${elapsed}s"
           adb devices -l
           
-          # Setup TCP connection
+          # Setup ADB TCP
           adb tcpip 5555
           sleep 2
           adb connect localhost:5555
-          
-          # Disconnect direct connection
           adb disconnect emulator-5554 2>/dev/null || true
           
-          echo "📱 Final ADB devices:"
+          echo "📱 Final devices:"
           adb devices -l
-          echo "✅ ADB TCP enabled"
 
-      - name: Setup Emulator for Security Testing
+      - name: Verify Emulator and Tools
         run: |
-          DEVICE="localhost:5555"
-          
-          echo "🔧 Configuring emulator for security testing..."
-          
-          # Disable animations for faster testing
-          adb -s $DEVICE shell settings put global window_animation_scale 0
-          adb -s $DEVICE shell settings put global transition_animation_scale 0
-          adb -s $DEVICE shell settings put global animator_duration_scale 0
-          
-          # Keep screen on
-          adb -s $DEVICE shell settings put system screen_off_timeout 2147483647
-          
-          # Enable stay awake while charging
-          adb -s $DEVICE shell settings put global stay_on_while_plugged_in 3
-          
-          # Create working directories on device
-          adb -s $DEVICE shell "mkdir -p /data/local/tmp/frida"
-          adb -s $DEVICE shell "mkdir -p /data/local/tmp/scripts"
-          adb -s $DEVICE shell "mkdir -p /sdcard/Download/apks"
-          
-          echo "✅ Emulator configured for security testing"
-
-      - name: Install Frida Server on Emulator
-        if: ${{ inputs.enable_root == 'true' }}
-        run: |
-          DEVICE="localhost:5555"
-          FRIDA_SERVER=~/tools/frida-server/frida-server-x86_64
-          
-          echo "📲 Installing Frida server on emulator..."
-          
-          # Root the emulator (su is available on google_apis images)
-          adb -s $DEVICE root || true
-          sleep 2
-          
-          # Remount system as writable
-          adb -s $DEVICE remount || true
-          
-          # Push Frida server
-          adb -s $DEVICE push $FRIDA_SERVER /data/local/tmp/frida-server
-          adb -s $DEVICE shell "chmod 755 /data/local/tmp/frida-server"
-          
-          # Start Frida server
-          adb -s $DEVICE shell "/data/local/tmp/frida-server -D &" &
-          sleep 3
-          
-          # Verify Frida server
-          adb -s $DEVICE forward tcp:27042 tcp:27042
-          
-          if frida-ps -H localhost:27042 > /dev/null 2>&1; then
-            echo "✅ Frida server running!"
-            frida-ps -H localhost:27042 | head -10
-          else
-            echo "⚠️ Frida server not detected, will use Gadget mode"
-          fi
-
-      - name: Push Frida Scripts to Device
-        run: |
-          DEVICE="localhost:5555"
-          
-          echo "📤 Pushing Frida scripts to device..."
-          
-          # Push universal bypass script
-          adb -s $DEVICE push ~/tools/frida-scripts/universal_bypass.js /data/local/tmp/scripts/
-          
-          # Push Frida gadget for manual injection
-          adb -s $DEVICE push ~/tools/frida-gadget/frida-gadget-x86_64.so /data/local/tmp/frida/libfrida-gadget.so
-          
-          # Create gadget config
-          cat > /tmp/gadget-config.json << 'EOF'
-{
-  "interaction": {
-    "type": "listen",
-    "address": "0.0.0.0",
-    "port": 27042,
-    "on_load": "resume"
-  }
-}
-EOF
-          adb -s $DEVICE push /tmp/gadget-config.json /data/local/tmp/frida/libfrida-gadget.config.so
-          
-          echo "✅ Scripts and gadget pushed to device"
-
-      - name: Verify Emulator Status
-        run: |
-          DEVICE="localhost:5555"
-          
-          echo "📱 Device Information:"
-          adb -s $DEVICE shell getprop ro.product.model
-          adb -s $DEVICE shell getprop ro.build.version.release
-          adb -s $DEVICE shell getprop ro.product.cpu.abi
+          echo "📱 Device Info:"
+          adb -s localhost:5555 shell getprop ro.product.model
+          adb -s localhost:5555 shell getprop ro.build.version.release
           
           echo ""
-          echo "📦 Disk space:"
-          adb -s $DEVICE shell df -h /data
-          
-          echo ""
-          echo "🔧 Installed tools verification:"
+          echo "🔧 Installed Tools:"
           echo "  APKTool: $(apktool --version 2>/dev/null || echo 'N/A')"
           echo "  JADX: $(jadx --version 2>/dev/null || echo 'N/A')"
           echo "  Frida: $(frida --version 2>/dev/null || echo 'N/A')"
           echo "  Objection: $(objection version 2>/dev/null || echo 'N/A')"
-          echo "  Radare2: $(r2 -v 2>/dev/null | head -1 || echo 'N/A')"
+          echo "  APKiD: $(apkid --version 2>/dev/null || echo 'N/A')"
+          echo "  R2: $(r2 -v 2>/dev/null | head -1 || echo 'N/A')"
 
-      - name: Create working directories
+      - name: Create Working Directories
         run: |
           mkdir -p /tmp/apks
           mkdir -p /tmp/patched
           mkdir -p /tmp/decompiled
-          mkdir -p /tmp/frida-scripts
           mkdir -p /tmp/downloads
-          mkdir -p /tmp/analysis
-          mkdir -p /tmp/dumps
+          mkdir -p /tmp/output
           mkdir -p /tmp/logs
           echo "✅ Working directories created"
 
-      #########################################
-      # PHASE 8: START ENHANCED REMOTE EXECUTOR
-      #########################################
-
-      - name: Start Ultimate Remote Executor Server
+      - name: Start Remote Executor Server
         run: |
-          cat > /tmp/ultimate_android_executor.py << 'EXECUTOR_EOF'
-#!/usr/bin/env python3
-"""
-Ultimate Android Security Testing Platform
-==========================================
-Comprehensive remote executor for advanced Android security analysis
-Supports: DexGuard 9.x, ProGuard, Arxan, and other protection schemes
-"""
-
-import os
-import sys
-import json
-import time
-import asyncio
-import subprocess
-import traceback
-import hashlib
-import re
-import shutil
-import zipfile
-from io import StringIO
-from typing import Optional, Dict, Any, List
-from contextlib import redirect_stdout, redirect_stderr
-from pathlib import Path
-
-from fastapi import FastAPI, HTTPException, UploadFile, File, Form, BackgroundTasks
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
-from pydantic import BaseModel
-import frida
-
-# ============== Configuration ==============
-APP_VERSION = "3.0.0"
-ADB_DEVICE = "localhost:5555"
-FRIDA_HOST = "localhost:27042"
-
-WORK_DIR = Path("/tmp")
-APK_DIR = WORK_DIR / "apks"
-PATCHED_DIR = WORK_DIR / "patched"
-DECOMPILED_DIR = WORK_DIR / "decompiled"
-SCRIPTS_DIR = WORK_DIR / "frida-scripts"
-DOWNLOADS_DIR = WORK_DIR / "downloads"
-ANALYSIS_DIR = WORK_DIR / "analysis"
-DUMPS_DIR = WORK_DIR / "dumps"
-LOGS_DIR = WORK_DIR / "logs"
-
-TOOLS_DIR = Path.home() / "tools"
-
-# ============== FastAPI App ==============
-app = FastAPI(
-    title="Ultimate Android Security Testing Platform",
-    description="Comprehensive platform for Android security analysis including DexGuard bypass",
-    version=APP_VERSION
-)
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-# ============== Global State ==============
-execution_namespace = {"__builtins__": __builtins__}
-frida_device = None
-frida_session = None
-frida_scripts = {}
-
-# ============== Pydantic Models ==============
-
-class CodeRequest(BaseModel):
-    code: str
-    timeout: Optional[int] = 300
-
-class BashRequest(BaseModel):
-    command: str
-    timeout: Optional[int] = 300
-
-class ADBRequest(BaseModel):
-    command: str
-    timeout: Optional[int] = 60
-
-class FridaScriptRequest(BaseModel):
-    script: str
-    process_name: Optional[str] = None
-    script_name: Optional[str] = "default"
-    spawn: Optional[bool] = False
-    package: Optional[str] = None
-
-class APKPatchRequest(BaseModel):
-    apk_path: str
-    architecture: str = "x86_64"
-    gadget_config: Optional[str] = None
-
-class APKAnalysisRequest(BaseModel):
-    apk_path: str
-    analysis_type: str = "full"  # full, quick, protection, strings
-
-class DecompileRequest(BaseModel):
-    apk_path: str
-    tool: str = "jadx"  # jadx, apktool, cfr, procyon
-    output_dir: Optional[str] = None
-
-class DownloadRequest(BaseModel):
-    url: str
-    destination: Optional[str] = None
-    filename: Optional[str] = None
-
-# ============== Helper Functions ==============
-
-def run_cmd(cmd: str, timeout: int = 300, shell: bool = True) -> Dict[str, Any]:
-    """Execute command and return result"""
-    try:
-        result = subprocess.run(
-            cmd,
-            shell=shell,
-            capture_output=True,
-            text=True,
-            timeout=timeout
-        )
-        return {
-            "success": result.returncode == 0,
-            "returncode": result.returncode,
-            "stdout": result.stdout,
-            "stderr": result.stderr
-        }
-    except subprocess.TimeoutExpired:
-        return {"success": False, "error": f"Command timed out after {timeout}s"}
-    except Exception as e:
-        return {"success": False, "error": str(e)}
-
-def adb_cmd(cmd: str, timeout: int = 60) -> Dict[str, Any]:
-    """Execute ADB command"""
-    return run_cmd(f"adb -s {ADB_DEVICE} {cmd}", timeout)
-
-# ============== Root Endpoints ==============
-
-@app.get("/")
-def root():
-    return {
-        "status": "online",
-        "service": "Ultimate Android Security Testing Platform",
-        "version": APP_VERSION,
-        "capabilities": {
-            "analysis": {
-                "detect_protection": "/analyze/protection - Detect DexGuard, ProGuard, etc.",
-                "decompile": "/decompile - Decompile with JADX, APKTool, CFR, Procyon",
-                "strings": "/analyze/strings - Extract and analyze strings",
-                "native": "/analyze/native - Analyze native libraries with Ghidra/Radare2",
-                "full": "/analyze/full - Complete APK analysis"
-            },
-            "patching": {
-                "patch_gadget": "/apk/patch - Patch with Frida Gadget",
-                "patch_advanced": "/apk/patch/advanced - Advanced patching with anti-detection bypass",
-                "sign": "/apk/sign - Sign APK with uber-apk-signer",
-                "align": "/apk/align - Zipalign APK"
-            },
-            "frida": {
-                "connect": "/frida/connect - Connect to Frida",
-                "spawn": "/frida/spawn - Spawn app with Frida",
-                "script": "/frida/script - Load Frida script",
-                "bypass": "/frida/bypass - Load universal bypass script",
-                "dexguard": "/frida/dexguard - Load DexGuard-specific bypass",
-                "ssl_bypass": "/frida/ssl-bypass - Bypass SSL pinning",
-                "root_bypass": "/frida/root-bypass - Bypass root detection"
-            },
-            "adb": {
-                "execute": "/adb - Execute ADB command",
-                "devices": "/adb/devices - List devices",
-                "packages": "/adb/packages - List packages",
-                "logcat": "/adb/logcat - Get logcat output"
-            },
-            "tools": {
-                "list": "/tools/list - List available tools",
-                "radare2": "/tools/radare2 - Run Radare2 command",
-                "jadx": "/tools/jadx - Run JADX",
-                "apktool": "/tools/apktool - Run APKTool"
-            },
-            "files": {
-                "upload": "/upload - Upload file",
-                "download": "/download - Download from URL",
-                "list": "/ls - List directory"
-            }
-        }
-    }
-
-@app.get("/health")
-def health():
-    import psutil
-    
-    adb_result = run_cmd("adb devices")
-    emulator_connected = ADB_DEVICE in adb_result.get("stdout", "")
-    
-    frida_server_running = False
-    try:
-        result = run_cmd(f"frida-ps -H {FRIDA_HOST}", timeout=5)
-        frida_server_running = result.get("success", False)
-    except:
-        pass
-    
-    return {
-        "status": "healthy",
-        "version": APP_VERSION,
-        "cpu_percent": psutil.cpu_percent(),
-        "memory_percent": psutil.virtual_memory().percent,
-        "disk_free_gb": round(psutil.disk_usage('/').free / (1024**3), 2),
-        "emulator_connected": emulator_connected,
-        "frida_version": frida.__version__,
-        "frida_server_running": frida_server_running,
-        "frida_session_active": frida_session is not None,
-        "tools_available": {
-            "apktool": shutil.which("apktool") is not None,
-            "jadx": shutil.which("jadx") is not None,
-            "radare2": shutil.which("r2") is not None,
-            "objection": shutil.which("objection") is not None,
-            "simplify": shutil.which("simplify") is not None,
-        }
-    }
-
-# ============== Analysis Endpoints ==============
-
-@app.post("/analyze/protection")
-def analyze_protection(request: APKAnalysisRequest):
-    """Detect protection schemes (DexGuard, ProGuard, Arxan, etc.)"""
-    apk_path = request.apk_path
-    
-    if not Path(apk_path).exists():
-        return {"success": False, "error": f"APK not found: {apk_path}"}
-    
-    results = {
-        "apk": apk_path,
-        "protections_detected": [],
-        "details": {},
-        "recommendations": []
-    }
-    
-    try:
-        # Use APKiD for protection detection
-        apkid_result = run_cmd(f"apkid -j {apk_path}", timeout=120)
-        if apkid_result.get("success"):
-            try:
-                apkid_data = json.loads(apkid_result["stdout"])
-                results["apkid"] = apkid_data
-                
-                # Parse APKiD results
-                for file_result in apkid_data.get("files", []):
-                    matches = file_result.get("matches", {})
-                    
-                    if "anti_vm" in matches:
-                        results["protections_detected"].append("Anti-VM/Emulator")
-                    if "anti_debug" in matches:
-                        results["protections_detected"].append("Anti-Debug")
-                    if "obfuscator" in matches:
-                        for obf in matches["obfuscator"]:
-                            results["protections_detected"].append(f"Obfuscator: {obf}")
-                    if "packer" in matches:
-                        for packer in matches["packer"]:
-                            results["protections_detected"].append(f"Packer: {packer}")
-                    if "protector" in matches:
-                        for protector in matches["protector"]:
-                            results["protections_detected"].append(f"Protector: {protector}")
-            except json.JSONDecodeError:
-                results["apkid_raw"] = apkid_result["stdout"]
-        
-        # Check for specific protections by examining APK contents
-        with zipfile.ZipFile(apk_path, 'r') as zf:
-            file_list = zf.namelist()
-            
-            # DexGuard indicators
-            dexguard_indicators = [
-                "assets/dexguard",
-                "libdexguard",
-                "com/guardsquare"
-            ]
-            for indicator in dexguard_indicators:
-                if any(indicator in f for f in file_list):
-                    if "DexGuard" not in results["protections_detected"]:
-                        results["protections_detected"].append("DexGuard")
-            
-            # Check for encrypted DEX
-            for f in file_list:
-                if f.endswith('.dex'):
-                    dex_data = zf.read(f)
-                    if not dex_data.startswith(b'dex\n'):
-                        results["protections_detected"].append(f"Encrypted DEX: {f}")
-            
-            # Native library analysis
-            native_libs = [f for f in file_list if f.endswith('.so')]
-            results["native_libraries"] = native_libs
-            
-            # Check for anti-frida
-            for lib in native_libs:
-                lib_data = zf.read(lib)
-                if b'frida' in lib_data.lower() or b'xposed' in lib_data.lower():
-                    results["protections_detected"].append(f"Anti-Frida in: {lib}")
-        
-        # Generate recommendations
-        if "DexGuard" in str(results["protections_detected"]):
-            results["recommendations"].append("Use /frida/dexguard for DexGuard bypass")
-            results["recommendations"].append("Consider string decryption hooks")
-        
-        if any("Anti" in p for p in results["protections_detected"]):
-            results["recommendations"].append("Use /frida/bypass for universal protection bypass")
-        
-        results["success"] = True
-        
-    except Exception as e:
-        results["success"] = False
-        results["error"] = str(e)
-    
-    return results
-
-@app.post("/decompile")
-def decompile_apk(request: DecompileRequest):
-    """Decompile APK using specified tool"""
-    apk_path = request.apk_path
-    tool = request.tool.lower()
-    
-    if not Path(apk_path).exists():
-        return {"success": False, "error": f"APK not found: {apk_path}"}
-    
-    apk_name = Path(apk_path).stem
-    output_dir = request.output_dir or str(DECOMPILED_DIR / f"{apk_name}_{tool}")
-    
-    os.makedirs(output_dir, exist_ok=True)
-    
-    commands = {
-        "jadx": f"jadx -d {output_dir} --deobf --show-bad-code {apk_path}",
-        "apktool": f"apktool d -f -o {output_dir} {apk_path}",
-        "cfr": f"cfr {apk_path} --outputdir {output_dir}",
-        "procyon": f"procyon -o {output_dir} {apk_path}",
-    }
-    
-    if tool not in commands:
-        return {"success": False, "error": f"Unknown tool: {tool}. Use: jadx, apktool, cfr, procyon"}
-    
-    result = run_cmd(commands[tool], timeout=600)
-    
-    if result.get("success") or Path(output_dir).exists():
-        # List decompiled files
-        files = []
-        for root, dirs, filenames in os.walk(output_dir):
-            for f in filenames[:100]:  # Limit to first 100 files
-                files.append(os.path.join(root, f).replace(output_dir, ""))
-        
-        return {
-            "success": True,
-            "tool": tool,
-            "output_dir": output_dir,
-            "files_count": len(files),
-            "sample_files": files[:20],
-            "stdout": result.get("stdout", "")[:1000],
-            "stderr": result.get("stderr", "")[:500]
-        }
-    else:
-        return {
-            "success": False,
-            "error": "Decompilation failed",
-            "stdout": result.get("stdout", ""),
-            "stderr": result.get("stderr", "")
-        }
-
-@app.post("/analyze/strings")
-def analyze_strings(request: APKAnalysisRequest):
-    """Extract and analyze strings from APK"""
-    apk_path = request.apk_path
-    
-    if not Path(apk_path).exists():
-        return {"success": False, "error": f"APK not found: {apk_path}"}
-    
-    results = {
-        "urls": [],
-        "ips": [],
-        "emails": [],
-        "api_keys": [],
-        "interesting": [],
-        "base64": []
-    }
-    
-    try:
-        # Extract strings using multiple methods
-        strings_output = run_cmd(f"strings {apk_path}", timeout=60)
-        all_strings = strings_output.get("stdout", "").split("\n")
-        
-        # Also try unzip + strings on dex
-        with zipfile.ZipFile(apk_path, 'r') as zf:
-            for name in zf.namelist():
-                if name.endswith('.dex'):
-                    dex_data = zf.read(name)
-                    # Simple string extraction from DEX
-                    import re
-                    strings = re.findall(b'[\x20-\x7E]{4,}', dex_data)
-                    all_strings.extend([s.decode('utf-8', errors='ignore') for s in strings])
-        
-        # Patterns
-        url_pattern = re.compile(r'https?://[^\s<>"\']+')
-        ip_pattern = re.compile(r'\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b')
-        email_pattern = re.compile(r'[\w\.-]+@[\w\.-]+\.\w+')
-        api_key_pattern = re.compile(r'[A-Za-z0-9_-]{20,}')
-        base64_pattern = re.compile(r'^[A-Za-z0-9+/]{20,}={0,2}$')
-        
-        for s in all_strings:
-            s = s.strip()
-            if not s:
-                continue
-            
-            # URLs
-            urls = url_pattern.findall(s)
-            results["urls"].extend(urls)
-            
-            # IPs
-            ips = ip_pattern.findall(s)
-            results["ips"].extend(ips)
-            
-            # Emails
-            emails = email_pattern.findall(s)
-            results["emails"].extend(emails)
-            
-            # Potential API keys
-            if any(kw in s.lower() for kw in ['api', 'key', 'secret', 'token', 'password']):
-                results["api_keys"].append(s[:200])
-            
-            # Base64
-            if base64_pattern.match(s) and len(s) > 30:
-                results["base64"].append(s[:100])
-            
-            # Interesting strings
-            interesting_keywords = ['encrypt', 'decrypt', 'license', 'premium', 'root', 
-                                  'debug', 'admin', 'config', 'firebase', 'aws', 'azure']
-            if any(kw in s.lower() for kw in interesting_keywords):
-                results["interesting"].append(s[:200])
-        
-        # Deduplicate
-        for key in results:
-            results[key] = list(set(results[key]))[:100]
-        
-        results["success"] = True
-        results["total_strings"] = len(all_strings)
-        
-    except Exception as e:
-        results["success"] = False
-        results["error"] = str(e)
-    
-    return results
-
-@app.post("/analyze/full")
-def full_analysis(request: APKAnalysisRequest):
-    """Comprehensive APK analysis"""
-    apk_path = request.apk_path
-    
-    if not Path(apk_path).exists():
-        return {"success": False, "error": f"APK not found: {apk_path}"}
-    
-    results = {
-        "apk_path": apk_path,
-        "basic_info": {},
-        "protections": {},
-        "permissions": [],
-        "activities": [],
-        "services": [],
-        "receivers": [],
-        "providers": [],
-        "native_libs": [],
-        "strings_summary": {},
-        "recommendations": []
-    }
-    
-    try:
-        # Basic info using aapt
-        aapt_result = run_cmd(f"aapt dump badging {apk_path}")
-        if aapt_result.get("success"):
-            for line in aapt_result["stdout"].split("\n"):
-                if line.startswith("package:"):
-                    parts = line.split("'")
-                    results["basic_info"]["package_name"] = parts[1] if len(parts) > 1 else None
-                    results["basic_info"]["version_code"] = parts[3] if len(parts) > 3 else None
-                    results["basic_info"]["version_name"] = parts[5] if len(parts) > 5 else None
-                elif line.startswith("sdkVersion:"):
-                    results["basic_info"]["min_sdk"] = line.split("'")[1]
-                elif line.startswith("targetSdkVersion:"):
-                    results["basic_info"]["target_sdk"] = line.split("'")[1]
-                elif line.startswith("uses-permission:"):
-                    perm = line.split("'")[1] if "'" in line else line
-                    results["permissions"].append(perm)
-                elif line.startswith("launchable-activity:"):
-                    activity = line.split("'")[1] if "'" in line else line
-                    results["activities"].append(activity)
-        
-        # Protection analysis
-        protection_result = analyze_protection(APKAnalysisRequest(apk_path=apk_path))
-        results["protections"] = protection_result
-        
-        # Native libraries
-        with zipfile.ZipFile(apk_path, 'r') as zf:
-            for f in zf.namelist():
-                if f.endswith('.so'):
-                    results["native_libs"].append(f)
-        
-        # File hash
-        with open(apk_path, 'rb') as f:
-            results["basic_info"]["sha256"] = hashlib.sha256(f.read()).hexdigest()
-            f.seek(0)
-            results["basic_info"]["md5"] = hashlib.md5(f.read()).hexdigest()
-        
-        results["basic_info"]["size_mb"] = round(os.path.getsize(apk_path) / (1024*1024), 2)
-        
-        # Generate recommendations
-        dangerous_perms = ["CAMERA", "RECORD_AUDIO", "READ_SMS", "SEND_SMS", 
-                         "READ_CONTACTS", "ACCESS_FINE_LOCATION"]
-        for perm in results["permissions"]:
-            for dp in dangerous_perms:
-                if dp in perm:
-                    results["recommendations"].append(f"Dangerous permission: {perm}")
-        
-        results["success"] = True
-        
-    except Exception as e:
-        results["success"] = False
-        results["error"] = str(e)
-        results["traceback"] = traceback.format_exc()
-    
-    return results
-
-# ============== APK Patching Endpoints ==============
-
-@app.post("/apk/patch")
-def patch_apk(request: APKPatchRequest):
-    """Patch APK with Frida Gadget"""
-    apk_path = request.apk_path
-    arch = request.architecture
-    
-    if not Path(apk_path).exists():
-        return {"success": False, "error": f"APK not found: {apk_path}"}
-    
-    # Use objection for patching
-    result = run_cmd(f"objection patchapk -s {apk_path} -a {arch}", timeout=300)
-    
-    patched_name = Path(apk_path).stem + ".objection.apk"
-    patched_path = Path(apk_path).parent / patched_name
-    
-    if patched_path.exists():
-        return {
-            "success": True,
-            "original_apk": apk_path,
-            "patched_apk": str(patched_path),
-            "message": "APK patched with Frida Gadget"
-        }
-    else:
-        return {
-            "success": False,
-            "error": "Patching may have failed",
-            "stdout": result.get("stdout", ""),
-            "stderr": result.get("stderr", "")
-        }
-
-@app.post("/apk/patch/advanced")
-def patch_apk_advanced(request: APKPatchRequest):
-    """Advanced APK patching with manual Gadget injection"""
-    apk_path = request.apk_path
-    arch = request.architecture
-    
-    if not Path(apk_path).exists():
-        return {"success": False, "error": f"APK not found: {apk_path}"}
-    
-    try:
-        apk_name = Path(apk_path).stem
-        work_dir = PATCHED_DIR / f"{apk_name}_work"
-        output_apk = PATCHED_DIR / f"{apk_name}_patched.apk"
-        
-        # Step 1: Decompile with apktool
-        run_cmd(f"rm -rf {work_dir}")
-        result = run_cmd(f"apktool d -f -o {work_dir} {apk_path}", timeout=120)
-        if not work_dir.exists():
-            return {"success": False, "error": "APKTool decompilation failed", "details": result}
-        
-        # Step 2: Add Frida Gadget
-        lib_dir = work_dir / "lib" / arch
-        lib_dir.mkdir(parents=True, exist_ok=True)
-        
-        gadget_src = TOOLS_DIR / "frida-gadget" / f"frida-gadget-{arch}.so"
-        gadget_dst = lib_dir / "libfrida-gadget.so"
-        
-        if gadget_src.exists():
-            shutil.copy(gadget_src, gadget_dst)
-        else:
-            # Download if not present
-            frida_version = "17.0.5"
-            url = f"https://github.com/frida/frida/releases/download/{frida_version}/frida-gadget-{frida_version}-android-{arch}.so.xz"
-            run_cmd(f"wget -q {url} -O /tmp/gadget.so.xz && xz -d /tmp/gadget.so.xz && mv /tmp/gadget.so {gadget_dst}")
-        
-        # Step 3: Create gadget config
-        gadget_config = {
-            "interaction": {
-                "type": "listen",
-                "address": "0.0.0.0",
-                "port": 27042,
-                "on_load": "resume"
-            }
-        }
-        if request.gadget_config:
-            gadget_config = json.loads(request.gadget_config)
-        
-        config_path = lib_dir / "libfrida-gadget.config.so"
-        with open(config_path, 'w') as f:
-            json.dump(gadget_config, f)
-        
-        # Step 4: Patch smali to load gadget
-        # Find main activity
-        manifest_path = work_dir / "AndroidManifest.xml"
-        main_activity = None
-        
-        with open(manifest_path, 'r') as f:
-            manifest_content = f.read()
-            # Find launcher activity
-            match = re.search(r'android:name="([^"]+)"[^>]*>[\s\S]*?android\.intent\.action\.MAIN', manifest_content)
-            if match:
-                main_activity = match.group(1)
-                if main_activity.startswith('.'):
-                    # Get package name
-                    pkg_match = re.search(r'package="([^"]+)"', manifest_content)
-                    if pkg_match:
-                        main_activity = pkg_match.group(1) + main_activity
-        
-        if main_activity:
-            # Convert to smali path
-            smali_path = work_dir / "smali" / main_activity.replace('.', '/') + ".smali"
-            
-            if smali_path.exists():
-                with open(smali_path, 'r') as f:
-                    smali_content = f.read()
-                
-                # Add loadLibrary call
-                load_lib_code = '''
-    const-string v0, "frida-gadget"
-    invoke-static {v0}, Ljava/lang/System;->loadLibrary(Ljava/lang/String;)V
-'''
-                # Insert after .locals in static constructor or constructor
-                if '.method static constructor' in smali_content:
-                    smali_content = re.sub(
-                        r'(\.method static constructor.*?\n\s*\.locals \d+)',
-                        r'\1\n' + load_lib_code,
-                        smali_content,
-                        count=1
-                    )
-                elif '.method public constructor' in smali_content:
-                    smali_content = re.sub(
-                        r'(\.method public constructor.*?\n\s*\.locals )(\d+)',
-                        lambda m: m.group(1) + str(int(m.group(2)) + 1) + '\n' + load_lib_code,
-                        smali_content,
-                        count=1
-                    )
-                
-                with open(smali_path, 'w') as f:
-                    f.write(smali_content)
-        
-        # Step 5: Add INTERNET permission if missing
-        if 'android.permission.INTERNET' not in manifest_content:
-            manifest_content = manifest_content.replace(
-                '<manifest ',
-                '<manifest xmlns:android="http://schemas.android.com/apk/res/android" '
-            )
-            manifest_content = re.sub(
-                r'(<manifest[^>]*>)',
-                r'\1\n    <uses-permission android:name="android.permission.INTERNET"/>',
-                manifest_content
-            )
-            with open(manifest_path, 'w') as f:
-                f.write(manifest_content)
-        
-        # Step 6: Rebuild APK
-        result = run_cmd(f"apktool b {work_dir} -o /tmp/unsigned.apk", timeout=120)
-        
-        # Step 7: Zipalign
-        run_cmd(f"zipalign -f 4 /tmp/unsigned.apk /tmp/aligned.apk")
-        
-        # Step 8: Sign APK
-        run_cmd(f"uber-apk-signer -a /tmp/aligned.apk -o {PATCHED_DIR}")
-        
-        # Find signed APK
-        signed_apks = list(PATCHED_DIR.glob("aligned-aligned-debugSigned.apk"))
-        if signed_apks:
-            shutil.move(signed_apks[0], output_apk)
-        elif Path("/tmp/aligned.apk").exists():
-            shutil.move("/tmp/aligned.apk", output_apk)
-        
-        if output_apk.exists():
-            return {
-                "success": True,
-                "original_apk": apk_path,
-                "patched_apk": str(output_apk),
-                "gadget_config": gadget_config,
-                "main_activity": main_activity
-            }
-        else:
-            return {"success": False, "error": "Failed to produce patched APK"}
-        
-    except Exception as e:
-        return {"success": False, "error": str(e), "traceback": traceback.format_exc()}
-
-@app.post("/apk/sign")
-def sign_apk(apk_path: str):
-    """Sign APK with uber-apk-signer"""
-    if not Path(apk_path).exists():
-        return {"success": False, "error": f"APK not found: {apk_path}"}
-    
-    output_dir = str(Path(apk_path).parent)
-    result = run_cmd(f"uber-apk-signer -a {apk_path} -o {output_dir}")
-    
-    return {
-        "success": result.get("success", False),
-        "output_dir": output_dir,
-        "stdout": result.get("stdout", ""),
-        "stderr": result.get("stderr", "")
-    }
-
-@app.post("/apk/install")
-def install_apk(apk_path: str):
-    """Install APK on emulator"""
-    if not Path(apk_path).exists():
-        return {"success": False, "error": f"APK not found: {apk_path}"}
-    
-    result = adb_cmd(f"install -r -g {apk_path}", timeout=120)
-    return {
-        "success": "Success" in result.get("stdout", "") or result.get("success", False),
-        "apk_path": apk_path,
-        "stdout": result.get("stdout", ""),
-        "stderr": result.get("stderr", "")
-    }
-
-@app.get("/apk/info")
-def apk_info(apk_path: str):
-    """Get APK information"""
-    if not Path(apk_path).exists():
-        return {"success": False, "error": f"APK not found: {apk_path}"}
-    
-    result = run_cmd(f"aapt dump badging {apk_path}")
-    
-    info = {"raw": result.get("stdout", "")}
-    
-    for line in result.get("stdout", "").split('\n'):
-        if line.startswith("package:"):
-            parts = line.split("'")
-            info["package_name"] = parts[1] if len(parts) > 1 else None
-            info["version_code"] = parts[3] if len(parts) > 3 else None
-            info["version_name"] = parts[5] if len(parts) > 5 else None
-        elif line.startswith("application-label:"):
-            info["app_name"] = line.split("'")[1] if "'" in line else None
-        elif line.startswith("sdkVersion:"):
-            info["min_sdk"] = line.split("'")[1] if "'" in line else None
-        elif line.startswith("targetSdkVersion:"):
-            info["target_sdk"] = line.split("'")[1] if "'" in line else None
-        elif line.startswith("launchable-activity:"):
-            info["main_activity"] = line.split("'")[1] if "'" in line else None
-    
-    return {"success": True, "info": info}
-
-@app.post("/apk/launch")
-def launch_app(package_name: str):
-    """Launch app on emulator"""
-    result = adb_cmd(f"shell monkey -p {package_name} -c android.intent.category.LAUNCHER 1")
-    return {
-        "success": result.get("success", False),
-        "package": package_name,
-        "stdout": result.get("stdout", ""),
-        "stderr": result.get("stderr", "")
-    }
-
-# ============== Frida Endpoints ==============
-
-@app.post("/frida/connect")
-def frida_connect():
-    """Connect to Frida"""
-    global frida_device
-    try:
-        adb_cmd("forward tcp:27042 tcp:27042")
-        frida_device = frida.get_device_manager().add_remote_device(FRIDA_HOST)
-        return {
-            "success": True,
-            "device": str(frida_device),
-            "message": "Frida connected"
-        }
-    except Exception as e:
-        return {"success": False, "error": str(e)}
-
-@app.get("/frida/processes")
-def frida_processes():
-    """List Frida-visible processes"""
-    global frida_device
-    if not frida_device:
-        connect_result = frida_connect()
-        if not connect_result.get("success"):
-            return connect_result
-    
-    try:
-        processes = frida_device.enumerate_processes()
-        return {
-            "success": True,
-            "processes": [{"pid": p.pid, "name": p.name} for p in processes]
-        }
-    except Exception as e:
-        return {"success": False, "error": str(e)}
-
-@app.post("/frida/spawn")
-def frida_spawn(package: str, script_path: Optional[str] = None):
-    """Spawn app with Frida and optionally load script"""
-    global frida_device, frida_session
-    
-    if not frida_device:
-        connect_result = frida_connect()
-        if not connect_result.get("success"):
-            return connect_result
-    
-    try:
-        pid = frida_device.spawn([package])
-        frida_session = frida_device.attach(pid)
-        
-        result = {
-            "success": True,
-            "pid": pid,
-            "package": package
-        }
-        
-        if script_path and Path(script_path).exists():
-            with open(script_path, 'r') as f:
-                script_code = f.read()
-            script = frida_session.create_script(script_code)
-            script.load()
-            result["script_loaded"] = script_path
-        
-        frida_device.resume(pid)
-        result["message"] = "App spawned and resumed"
-        
-        return result
-    except Exception as e:
-        return {"success": False, "error": str(e)}
-
-@app.post("/frida/attach")
-def frida_attach(process: str = "Gadget"):
-    """Attach to process"""
-    global frida_device, frida_session
-    
-    if not frida_device:
-        connect_result = frida_connect()
-        if not connect_result.get("success"):
-            return connect_result
-    
-    try:
-        frida_session = frida_device.attach(process)
-        return {
-            "success": True,
-            "process": process,
-            "session": str(frida_session)
-        }
-    except Exception as e:
-        return {"success": False, "error": str(e)}
-
-@app.post("/frida/script")
-def frida_load_script(request: FridaScriptRequest):
-    """Load Frida script"""
-    global frida_device, frida_session, frida_scripts
-    
-    if request.spawn and request.package:
-        spawn_result = frida_spawn(request.package)
-        if not spawn_result.get("success"):
-            return spawn_result
-    elif not frida_session:
-        process = request.process_name or "Gadget"
-        attach_result = frida_attach(process)
-        if not attach_result.get("success"):
-            return attach_result
-    
-    messages = []
-    
-    def on_message(message, data):
-        messages.append(message)
-        if message.get("type") == "send":
-            print(f"[FRIDA] {message.get('payload', '')}")
-    
-    try:
-        script = frida_session.create_script(request.script)
-        script.on('message', on_message)
-        script.load()
-        
-        frida_scripts[request.script_name] = script
-        
-        time.sleep(0.5)  # Collect initial messages
-        
-        return {
-            "success": True,
-            "script_name": request.script_name,
-            "message": "Script loaded",
-            "initial_messages": messages
-        }
-    except Exception as e:
-        return {"success": False, "error": str(e)}
-
-@app.post("/frida/bypass")
-def frida_universal_bypass(process_name: str = "Gadget"):
-    """Load universal protection bypass"""
-    script_path = Path.home() / "tools/frida-scripts/universal_bypass.js"
-    
-    if not script_path.exists():
-        return {"success": False, "error": "Bypass script not found"}
-    
-    with open(script_path, 'r') as f:
-        script_code = f.read()
-    
-    return frida_load_script(FridaScriptRequest(
-        script=script_code,
-        process_name=process_name,
-        script_name="universal_bypass"
-    ))
-
-@app.post("/frida/dexguard")
-def frida_dexguard_bypass(process_name: str = "Gadget"):
-    """Load DexGuard-specific bypass and string decryption hooks"""
-    script_path = Path.home() / "tools/frida-scripts/dexguard_string_decrypt.js"
-    
-    # Combine universal bypass with DexGuard-specific hooks
-    scripts = []
-    
-    universal_path = Path.home() / "tools/frida-scripts/universal_bypass.js"
-    if universal_path.exists():
-        with open(universal_path, 'r') as f:
-            scripts.append(f.read())
-    
-    if script_path.exists():
-        with open(script_path, 'r') as f:
-            scripts.append(f.read())
-    
-    combined_script = "\n\n".join(scripts)
-    
-    return frida_load_script(FridaScriptRequest(
-        script=combined_script,
-        process_name=process_name,
-        script_name="dexguard_bypass"
-    ))
-
-@app.post("/frida/ssl-bypass")
-def frida_ssl_bypass(process_name: str = "Gadget"):
-    """SSL pinning bypass"""
-    ssl_script = '''
-Java.perform(function() {
-    console.log("[*] SSL Pinning Bypass Active");
-    
-    // TrustManager
-    var X509TrustManager = Java.use("javax.net.ssl.X509TrustManager");
-    var SSLContext = Java.use("javax.net.ssl.SSLContext");
-    
-    var TrustManager = Java.registerClass({
-        name: "com.ssl.TrustManager",
-        implements: [X509TrustManager],
-        methods: {
-            checkClientTrusted: function(chain, authType) {},
-            checkServerTrusted: function(chain, authType) {},
-            getAcceptedIssuers: function() { return []; }
-        }
-    });
-    
-    var TrustManagers = [TrustManager.$new()];
-    SSLContext.init.overload("[Ljavax.net.ssl.KeyManager;", "[Ljavax.net.ssl.TrustManager;", "java.security.SecureRandom")
-        .implementation = function(km, tm, sr) {
-            console.log("[+] SSLContext.init() bypassed");
-            this.init(km, TrustManagers, sr);
-        };
-    
-    // OkHttp
-    try {
-        var CertPinner = Java.use("okhttp3.CertificatePinner");
-        CertPinner.check.overload("java.lang.String", "java.util.List").implementation = function(h, c) {
-            console.log("[+] OkHttp pin bypassed: " + h);
-        };
-    } catch(e) {}
-    
-    // TrustManagerImpl
-    try {
-        var TMI = Java.use("com.android.org.conscrypt.TrustManagerImpl");
-        TMI.verifyChain.implementation = function(u, t, h, c, o, s) {
-            console.log("[+] TrustManagerImpl bypassed: " + h);
-            return u;
-        };
-    } catch(e) {}
-    
-    console.log("[*] SSL Bypass installed");
-});
-'''
-    return frida_load_script(FridaScriptRequest(
-        script=ssl_script,
-        process_name=process_name,
-        script_name="ssl_bypass"
-    ))
-
-@app.post("/frida/root-bypass")
-def frida_root_bypass(process_name: str = "Gadget"):
-    """Root detection bypass"""
-    root_script = '''
-Java.perform(function() {
-    console.log("[*] Root Detection Bypass Active");
-    
-    // System.exit blocker
-    var System = Java.use("java.lang.System");
-    System.exit.implementation = function(code) {
-        console.log("[+] System.exit(" + code + ") blocked");
-    };
-    
-    // File.exists for root paths
-    var File = Java.use("java.io.File");
-    var origExists = File.exists;
-    File.exists.implementation = function() {
-        var path = this.getAbsolutePath();
-        var rootPaths = ["/system/app/Superuser.apk", "/sbin/su", "/system/bin/su",
-            "/system/xbin/su", "/data/local/xbin/su", "/data/local/bin/su", "/su/bin/su",
-            "/magisk", "/sbin/.magisk", "/data/adb/magisk"];
-        for (var i = 0; i < rootPaths.length; i++) {
-            if (path.indexOf(rootPaths[i]) !== -1) {
-                console.log("[+] Root check bypassed: " + path);
-                return false;
-            }
-        }
-        return origExists.call(this);
-    };
-    
-    // RootBeer
-    try {
-        var RB = Java.use("com.scottyab.rootbeer.RootBeer");
-        RB.isRooted.implementation = function() { return false; };
-        RB.isRootedWithoutBusyBoxCheck.implementation = function() { return false; };
-        console.log("[+] RootBeer bypassed");
-    } catch(e) {}
-    
-    // Runtime.exec for which su
-    var Runtime = Java.use("java.lang.Runtime");
-    var origExec = Runtime.exec.overload("java.lang.String");
-    origExec.implementation = function(cmd) {
-        if (cmd.indexOf("su") !== -1 || cmd.indexOf("which") !== -1) {
-            console.log("[+] Runtime.exec blocked: " + cmd);
-            throw Java.use("java.io.IOException").$new("Command not found");
-        }
-        return origExec.call(this, cmd);
-    };
-    
-    console.log("[*] Root bypass installed");
-});
-'''
-    return frida_load_script(FridaScriptRequest(
-        script=root_script,
-        process_name=process_name,
-        script_name="root_bypass"
-    ))
-
-@app.get("/frida/scripts")
-def list_frida_scripts():
-    """List loaded scripts"""
-    return {"success": True, "scripts": list(frida_scripts.keys())}
-
-@app.delete("/frida/script/{name}")
-def unload_frida_script(name: str):
-    """Unload script"""
-    if name in frida_scripts:
-        try:
-            frida_scripts[name].unload()
-            del frida_scripts[name]
-            return {"success": True, "message": f"Script '{name}' unloaded"}
-        except Exception as e:
-            return {"success": False, "error": str(e)}
-    return {"success": False, "error": f"Script '{name}' not found"}
-
-# ============== ADB Endpoints ==============
-
-@app.post("/adb")
-def execute_adb(request: ADBRequest):
-    """Execute ADB command"""
-    result = adb_cmd(request.command, request.timeout)
-    return {
-        "success": result.get("success", False),
-        "command": f"adb -s {ADB_DEVICE} {request.command}",
-        "stdout": result.get("stdout", ""),
-        "stderr": result.get("stderr", "")
-    }
-
-@app.get("/adb/devices")
-def list_devices():
-    """List ADB devices"""
-    result = run_cmd("adb devices -l")
-    lines = result.get("stdout", "").strip().split('\n')[1:]
-    devices = []
-    for line in lines:
-        if line.strip():
-            parts = line.split()
-            if len(parts) >= 2:
-                devices.append({
-                    "id": parts[0],
-                    "state": parts[1],
-                    "info": ' '.join(parts[2:]) if len(parts) > 2 else ""
-                })
-    return {"success": True, "devices": devices}
-
-@app.get("/adb/packages")
-def list_packages(filter: Optional[str] = None):
-    """List installed packages"""
-    cmd = "shell pm list packages"
-    if filter:
-        cmd += f" | grep -i {filter}"
-    result = adb_cmd(cmd)
-    packages = [p.replace("package:", "").strip() for p in result.get("stdout", "").split('\n') if p.strip()]
-    return {"success": True, "packages": packages, "count": len(packages)}
-
-@app.get("/adb/logcat")
-def get_logcat(lines: int = 100, filter: Optional[str] = None):
-    """Get logcat output"""
-    cmd = f"shell logcat -d -t {lines}"
-    if filter:
-        cmd += f" | grep -i {filter}"
-    result = adb_cmd(cmd, timeout=30)
-    return {
-        "success": result.get("success", False),
-        "logcat": result.get("stdout", ""),
-        "lines": lines
-    }
-
-# ============== Tools Endpoints ==============
-
-@app.get("/tools/list")
-def list_tools():
-    """List available tools"""
-    tools = {
-        "decompilers": ["jadx", "apktool", "cfr", "procyon", "fernflower", "bytecode-viewer"],
-        "converters": ["dex2jar", "enjarify"],
-        "signers": ["uber-apk-signer", "apksigner"],
-        "analysis": ["apkid", "androguard", "radare2", "ghidra"],
-        "deobfuscation": ["simplify"],
-        "frida": ["frida", "objection", "r2frida"],
-        "binary": ["capstone", "keystone", "unicorn", "lief"]
-    }
-    
-    # Check which are actually available
-    available = {}
-    for category, tool_list in tools.items():
-        available[category] = []
-        for tool in tool_list:
-            if shutil.which(tool) or shutil.which(tool.replace("-", "")):
-                available[category].append({"name": tool, "status": "available"})
-            else:
-                available[category].append({"name": tool, "status": "not in PATH"})
-    
-    return {"success": True, "tools": available}
-
-@app.post("/tools/radare2")
-def run_radare2(file_path: str, commands: List[str]):
-    """Run Radare2 commands"""
-    if not Path(file_path).exists():
-        return {"success": False, "error": f"File not found: {file_path}"}
-    
-    r2_script = "; ".join(commands)
-    result = run_cmd(f'r2 -q -c "{r2_script}" {file_path}', timeout=120)
-    
-    return {
-        "success": result.get("success", False),
-        "output": result.get("stdout", ""),
-        "stderr": result.get("stderr", "")
-    }
-
-# ============== Code Execution ==============
-
-@app.post("/execute")
-def execute_code(request: CodeRequest):
-    """Execute Python code"""
-    stdout_capture = StringIO()
-    stderr_capture = StringIO()
-    result = None
-    error = None
-    
-    try:
-        with redirect_stdout(stdout_capture), redirect_stderr(stderr_capture):
-            exec(request.code, execution_namespace)
-    except Exception as e:
-        error = f"{type(e).__name__}: {str(e)}\n{traceback.format_exc()}"
-    
-    return {
-        "success": error is None,
-        "stdout": stdout_capture.getvalue(),
-        "stderr": stderr_capture.getvalue(),
-        "error": error
-    }
-
-@app.post("/bash")
-def execute_bash(request: BashRequest):
-    """Execute bash command"""
-    return run_cmd(request.command, request.timeout)
-
-# ============== File Operations ==============
-
-@app.post("/upload")
-async def upload_file(file: UploadFile = File(...), destination: str = Form(default="/tmp/apks")):
-    """Upload file"""
-    try:
-        dest_path = Path(destination)
-        dest_path.mkdir(parents=True, exist_ok=True)
-        
-        file_path = dest_path / file.filename
-        
-        with open(file_path, "wb") as f:
-            content = await file.read()
-            f.write(content)
-        
-        return {
-            "success": True,
-            "filepath": str(file_path),
-            "filename": file.filename,
-            "size_bytes": len(content)
-        }
-    except Exception as e:
-        return {"success": False, "error": str(e)}
-
-@app.post("/download")
-def download_file(request: DownloadRequest):
-    """Download file from URL"""
-    try:
-        dest_dir = Path(request.destination or DOWNLOADS_DIR)
-        dest_dir.mkdir(parents=True, exist_ok=True)
-        
-        filename = request.filename or request.url.split('/')[-1].split('?')[0]
-        filepath = dest_dir / filename
-        
-        result = run_cmd(f'curl -L -o "{filepath}" "{request.url}"', timeout=600)
-        
-        if filepath.exists() and filepath.stat().st_size > 0:
-            return {
-                "success": True,
-                "filepath": str(filepath),
-                "size_mb": round(filepath.stat().st_size / (1024*1024), 2)
-            }
-        else:
-            return {"success": False, "error": "Download failed", "details": result}
-    except Exception as e:
-        return {"success": False, "error": str(e)}
-
-@app.get("/ls")
-def list_directory(path: str = "/tmp"):
-    """List directory"""
-    try:
-        p = Path(path)
-        if not p.exists():
-            return {"success": False, "error": f"Path not found: {path}"}
-        
-        items = []
-        for item in p.iterdir():
-            items.append({
-                "name": item.name,
-                "is_dir": item.is_dir(),
-                "size": item.stat().st_size if item.is_file() else None
-            })
-        
-        return {"success": True, "path": path, "items": items}
-    except Exception as e:
-        return {"success": False, "error": str(e)}
-
-@app.get("/read")
-def read_file(path: str, max_size: int = 1048576):
-    """Read file content"""
-    try:
-        p = Path(path)
-        if not p.exists():
-            return {"success": False, "error": f"File not found: {path}"}
-        
-        if p.stat().st_size > max_size:
-            return {"success": False, "error": f"File too large (>{max_size} bytes)"}
-        
-        with open(p, 'r', errors='ignore') as f:
-            content = f.read()
-        
-        return {"success": True, "path": path, "content": content}
-    except Exception as e:
-        return {"success": False, "error": str(e)}
-
-@app.get("/disk")
-def disk_usage():
-    """Disk usage info"""
-    import shutil
-    total, used, free = shutil.disk_usage("/")
-    return {
-        "total_gb": round(total / (1024**3), 2),
-        "used_gb": round(used / (1024**3), 2),
-        "free_gb": round(free / (1024**3), 2),
-        "percent_used": round(used / total * 100, 1)
-    }
-
-# ============== Main ==============
-
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
-EXECUTOR_EOF
-
-          echo "✅ Ultimate remote executor created"
-
-      - name: Start ngrok and Remote Executor
+          cat > /tmp/android_security_executor.py << 'SERVEREOF'
+          #!/usr/bin/env python3
+          """
+          Android Security Testing Remote Executor
+          Complete toolkit for APK analysis including DexGuard support
+          """
+          
+          import os
+          import sys
+          import json
+          import time
+          import asyncio
+          import subprocess
+          import traceback
+          import shutil
+          import base64
+          import hashlib
+          from io import StringIO
+          from typing import Optional, Dict, Any, List
+          from contextlib import redirect_stdout, redirect_stderr
+          from pathlib import Path
+          
+          from fastapi import FastAPI, HTTPException, UploadFile, File, Form
+          from fastapi.middleware.cors import CORSMiddleware
+          from fastapi.responses import FileResponse, JSONResponse
+          from pydantic import BaseModel
+          import frida
+          
+          app = FastAPI(
+              title="Android Security Testing Executor",
+              description="Complete toolkit for APK security analysis",
+              version="3.0.0"
+          )
+          
+          app.add_middleware(
+              CORSMiddleware,
+              allow_origins=["*"],
+              allow_credentials=True,
+              allow_methods=["*"],
+              allow_headers=["*"],
+          )
+          
+          # Configuration
+          ADB_DEVICE = "localhost:5555"
+          WORK_DIR = Path("/tmp")
+          APK_DIR = WORK_DIR / "apks"
+          PATCHED_DIR = WORK_DIR / "patched"
+          DECOMPILED_DIR = WORK_DIR / "decompiled"
+          SCRIPTS_DIR = WORK_DIR / "frida-scripts"
+          OUTPUT_DIR = WORK_DIR / "output"
+          
+          # Global state
+          execution_namespace = {"__builtins__": __builtins__}
+          frida_device = None
+          frida_session = None
+          frida_scripts = {}
+          
+          class CodeRequest(BaseModel):
+              code: str
+              timeout: Optional[int] = 300
+          
+          class BashRequest(BaseModel):
+              command: str
+              timeout: Optional[int] = 300
+          
+          class ADBRequest(BaseModel):
+              command: str
+              timeout: Optional[int] = 60
+          
+          class FridaScriptRequest(BaseModel):
+              script: str
+              process_name: Optional[str] = "Gadget"
+              script_name: Optional[str] = "default"
+          
+          class APKPatchRequest(BaseModel):
+              apk_path: str
+              architecture: str = "x86_64"
+              gadget_config: Optional[str] = None
+          
+          class DecompileRequest(BaseModel):
+              apk_path: str
+              tool: str = "jadx"
+              output_dir: Optional[str] = None
+          
+          # ============== Core Endpoints ==============
+          
+          @app.get("/")
+          def root():
+              return {
+                  "service": "Android Security Testing Executor",
+                  "version": "3.0.0",
+                  "status": "online",
+                  "tools": {
+                      "decompilers": ["jadx", "cfr", "procyon", "apktool"],
+                      "converters": ["dex2jar", "enjarify", "smali", "baksmali"],
+                      "analysis": ["apkid", "androguard", "radare2", "quark"],
+                      "instrumentation": ["frida", "objection"],
+                      "utilities": ["apksigner", "zipalign", "aapt2"]
+                  },
+                  "endpoints": {
+                      "system": ["/health", "/disk", "/tools"],
+                      "execution": ["/execute", "/bash", "/adb"],
+                      "apk": ["/apk/info", "/apk/patch", "/apk/install", "/apk/decompile", "/apk/identify"],
+                      "frida": ["/frida/connect", "/frida/script", "/frida/ssl-bypass", "/frida/root-bypass"],
+                      "files": ["/upload", "/download", "/ls", "/read"]
+                  }
+              }
+          
+          @app.get("/health")
+          def health():
+              import psutil
+              adb_result = subprocess.run(["adb", "devices"], capture_output=True, text=True)
+              emulator_ok = "localhost:5555" in adb_result.stdout or "emulator" in adb_result.stdout
+              
+              return {
+                  "status": "healthy",
+                  "cpu_percent": psutil.cpu_percent(),
+                  "memory_percent": psutil.virtual_memory().percent,
+                  "disk_free_gb": round(psutil.disk_usage('/').free / (1024**3), 2),
+                  "emulator_connected": emulator_ok,
+                  "frida_version": frida.__version__,
+                  "frida_session_active": frida_session is not None,
+                  "adb_device": ADB_DEVICE
+              }
+          
+          @app.get("/tools")
+          def list_tools():
+              """List all installed tools and versions"""
+              tools = {}
+              checks = [
+                  ("apktool", ["apktool", "--version"]),
+                  ("jadx", ["jadx", "--version"]),
+                  ("frida", ["frida", "--version"]),
+                  ("objection", ["objection", "version"]),
+                  ("apkid", ["apkid", "--version"]),
+                  ("r2", ["r2", "-v"]),
+                  ("dex2jar", ["d2j-dex2jar", "--help"]),
+                  ("smali", ["java", "-jar", "/usr/local/bin/smali.jar", "--version"]),
+                  ("cfr", ["java", "-jar", "/usr/local/bin/cfr.jar", "--version"]),
+                  ("aapt2", ["aapt2", "version"]),
+                  ("apksigner", ["apksigner", "--version"]),
+              ]
+              
+              for name, cmd in checks:
+                  try:
+                      result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+                      output = (result.stdout + result.stderr).strip().split('\n')[0][:100]
+                      tools[name] = {"installed": True, "version": output}
+                  except:
+                      tools[name] = {"installed": False, "version": None}
+              
+              return {"success": True, "tools": tools}
+          
+          # ============== Code Execution ==============
+          
+          @app.post("/execute")
+          def execute_code(request: CodeRequest):
+              stdout_capture = StringIO()
+              stderr_capture = StringIO()
+              result = None
+              error = None
+              
+              try:
+                  with redirect_stdout(stdout_capture), redirect_stderr(stderr_capture):
+                      exec(request.code, execution_namespace)
+                      lines = request.code.strip().split('\n')
+                      if lines:
+                          last = lines[-1].strip()
+                          if last and not any(last.startswith(k) for k in 
+                              ['import', 'from', 'def', 'class', 'if', 'for', 'while', 'with', 'try', '#', 'print', '=']):
+                              try:
+                                  result = eval(last, execution_namespace)
+                              except:
+                                  pass
+              except Exception as e:
+                  error = f"{type(e).__name__}: {str(e)}\n{traceback.format_exc()}"
+              
+              return {
+                  "success": error is None,
+                  "stdout": stdout_capture.getvalue(),
+                  "stderr": stderr_capture.getvalue(),
+                  "result": repr(result) if result is not None else None,
+                  "error": error
+              }
+          
+          @app.post("/bash")
+          def execute_bash(request: BashRequest):
+              try:
+                  result = subprocess.run(
+                      request.command, shell=True, capture_output=True, text=True,
+                      timeout=request.timeout, env={**os.environ, "PATH": os.environ.get("PATH", "") + ":/usr/local/bin"}
+                  )
+                  return {
+                      "success": result.returncode == 0,
+                      "returncode": result.returncode,
+                      "stdout": result.stdout,
+                      "stderr": result.stderr
+                  }
+              except subprocess.TimeoutExpired:
+                  return {"success": False, "error": f"Timeout after {request.timeout}s"}
+              except Exception as e:
+                  return {"success": False, "error": str(e)}
+          
+          # ============== ADB ==============
+          
+          @app.post("/adb")
+          def execute_adb(request: ADBRequest):
+              try:
+                  cmd = f"adb -s {ADB_DEVICE} {request.command}"
+                  result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=request.timeout)
+                  return {
+                      "success": result.returncode == 0,
+                      "command": cmd,
+                      "stdout": result.stdout,
+                      "stderr": result.stderr
+                  }
+              except subprocess.TimeoutExpired:
+                  return {"success": False, "error": f"Timeout after {request.timeout}s"}
+              except Exception as e:
+                  return {"success": False, "error": str(e)}
+          
+          @app.get("/adb/devices")
+          def adb_devices():
+              result = subprocess.run(["adb", "devices", "-l"], capture_output=True, text=True)
+              lines = result.stdout.strip().split('\n')[1:]
+              devices = []
+              for line in lines:
+                  if line.strip():
+                      parts = line.split()
+                      if len(parts) >= 2:
+                          devices.append({"id": parts[0], "state": parts[1], "info": ' '.join(parts[2:])})
+              return {"success": True, "devices": devices}
+          
+          @app.get("/adb/packages")
+          def adb_packages(filter: Optional[str] = None):
+              cmd = f"adb -s {ADB_DEVICE} shell pm list packages"
+              if filter:
+                  cmd += f" | grep -i {filter}"
+              result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
+              packages = [p.replace("package:", "") for p in result.stdout.strip().split('\n') if p]
+              return {"success": True, "packages": packages, "count": len(packages)}
+          
+          # ============== APK Operations ==============
+          
+          @app.get("/apk/info")
+          def apk_info(apk_path: str):
+              try:
+                  # Use aapt2 from build-tools
+                  aapt_paths = [
+                      "/usr/local/lib/android/sdk/build-tools/34.0.0/aapt2",
+                      "/usr/local/lib/android/sdk/build-tools/33.0.2/aapt2",
+                      "aapt2", "aapt"
+                  ]
+                  
+                  result = None
+                  for aapt in aapt_paths:
+                      try:
+                          result = subprocess.run(f"{aapt} dump badging {apk_path}", shell=True, capture_output=True, text=True, timeout=30)
+                          if result.returncode == 0:
+                              break
+                      except:
+                          continue
+                  
+                  if not result or result.returncode != 0:
+                      result = subprocess.run(f"aapt dump badging {apk_path}", shell=True, capture_output=True, text=True)
+                  
+                  info = {"raw": result.stdout[:5000]}
+                  
+                  for line in result.stdout.split('\n'):
+                      if line.startswith("package:"):
+                          parts = line.split("'")
+                          info["package_name"] = parts[1] if len(parts) > 1 else None
+                          info["version_code"] = parts[3] if len(parts) > 3 else None
+                          info["version_name"] = parts[5] if len(parts) > 5 else None
+                      elif line.startswith("application-label:"):
+                          info["app_name"] = line.split("'")[1] if "'" in line else None
+                      elif line.startswith("sdkVersion:"):
+                          info["min_sdk"] = line.split("'")[1] if "'" in line else None
+                      elif line.startswith("targetSdkVersion:"):
+                          info["target_sdk"] = line.split("'")[1] if "'" in line else None
+                  
+                  # Get file hash
+                  with open(apk_path, 'rb') as f:
+                      info["sha256"] = hashlib.sha256(f.read()).hexdigest()
+                  info["size_mb"] = round(os.path.getsize(apk_path) / (1024*1024), 2)
+                  
+                  return {"success": True, "info": info}
+              except Exception as e:
+                  return {"success": False, "error": str(e)}
+          
+          @app.get("/apk/identify")
+          def apk_identify(apk_path: str):
+              """Identify protections using APKiD"""
+              try:
+                  result = subprocess.run(
+                      f"apkid -j {apk_path}",
+                      shell=True, capture_output=True, text=True, timeout=120
+                  )
+                  
+                  if result.returncode == 0:
+                      try:
+                          data = json.loads(result.stdout)
+                          return {"success": True, "apkid": data}
+                      except:
+                          return {"success": True, "apkid_raw": result.stdout}
+                  else:
+                      return {"success": False, "error": result.stderr, "stdout": result.stdout}
+              except Exception as e:
+                  return {"success": False, "error": str(e)}
+          
+          @app.post("/apk/patch")
+          def patch_apk(request: APKPatchRequest):
+              """Patch APK with Frida Gadget"""
+              try:
+                  apk_path = Path(request.apk_path)
+                  if not apk_path.exists():
+                      return {"success": False, "error": f"APK not found: {apk_path}"}
+                  
+                  # Set PATH to include build-tools
+                  env = os.environ.copy()
+                  env["PATH"] = f"/usr/local/lib/android/sdk/build-tools/34.0.0:{env.get('PATH', '')}"
+                  
+                  cmd = f"objection patchapk -s {apk_path} -a {request.architecture}"
+                  
+                  result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=300, env=env)
+                  
+                  patched_name = apk_path.stem + ".objection.apk"
+                  patched_path = apk_path.parent / patched_name
+                  
+                  if patched_path.exists() and patched_path.stat().st_size > 0:
+                      # Verify Frida Gadget is in the APK
+                      check = subprocess.run(f"unzip -l {patched_path} | grep -i frida", shell=True, capture_output=True, text=True)
+                      has_gadget = "frida" in check.stdout.lower()
+                      
+                      return {
+                          "success": True,
+                          "original_apk": str(apk_path),
+                          "patched_apk": str(patched_path),
+                          "size_mb": round(patched_path.stat().st_size / (1024*1024), 2),
+                          "has_frida_gadget": has_gadget,
+                          "stdout": result.stdout[-2000:] if result.stdout else "",
+                          "stderr": result.stderr[-1000:] if result.stderr else ""
+                      }
+                  else:
+                      return {
+                          "success": False,
+                          "error": "Patching failed - output file not created or empty",
+                          "stdout": result.stdout,
+                          "stderr": result.stderr
+                      }
+              except subprocess.TimeoutExpired:
+                  return {"success": False, "error": "Patching timed out after 300s"}
+              except Exception as e:
+                  return {"success": False, "error": str(e)}
+          
+          @app.post("/apk/patch-manual")
+          def patch_apk_manual(request: APKPatchRequest):
+              """Manual APK patching with more control (for difficult APKs)"""
+              try:
+                  apk_path = Path(request.apk_path)
+                  if not apk_path.exists():
+                      return {"success": False, "error": f"APK not found"}
+                  
+                  work_dir = PATCHED_DIR / f"manual_{int(time.time())}"
+                  work_dir.mkdir(parents=True, exist_ok=True)
+                  
+                  steps = []
+                  
+                  # Step 1: Decompile with apktool
+                  decompiled = work_dir / "decompiled"
+                  cmd = f"apktool d -f -o {decompiled} {apk_path}"
+                  result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=120)
+                  steps.append({"step": "decompile", "success": result.returncode == 0, "output": result.stderr[:500]})
+                  
+                  if result.returncode != 0:
+                      return {"success": False, "error": "Decompilation failed", "steps": steps}
+                  
+                  # Step 2: Download Frida Gadget
+                  gadget_dir = work_dir / "gadget"
+                  gadget_dir.mkdir(exist_ok=True)
+                  
+                  frida_version = frida.__version__
+                  arch = request.architecture
+                  gadget_url = f"https://github.com/frida/frida/releases/download/{frida_version}/frida-gadget-{frida_version}-android-{arch}.so.xz"
+                  
+                  gadget_path = gadget_dir / f"libfrida-gadget.so"
+                  cmd = f"wget -q {gadget_url} -O {gadget_dir}/gadget.so.xz && xz -d {gadget_dir}/gadget.so.xz && mv {gadget_dir}/gadget.so {gadget_path}"
+                  result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=60)
+                  steps.append({"step": "download_gadget", "success": result.returncode == 0})
+                  
+                  if not gadget_path.exists():
+                      return {"success": False, "error": "Failed to download Frida Gadget", "steps": steps}
+                  
+                  # Step 3: Add gadget to lib directory
+                  lib_dir = decompiled / "lib" / arch
+                  lib_dir.mkdir(parents=True, exist_ok=True)
+                  shutil.copy(gadget_path, lib_dir / "libfrida-gadget.so")
+                  steps.append({"step": "copy_gadget", "success": True})
+                  
+                  # Step 4: Modify smali to load gadget
+                  # Find main activity
+                  manifest = decompiled / "AndroidManifest.xml"
+                  with open(manifest, 'r') as f:
+                      manifest_content = f.read()
+                  
+                  # Simple injection - add to Application class or main activity
+                  smali_dirs = list(decompiled.glob("smali*/"))
+                  injection_done = False
+                  
+                  for smali_dir in smali_dirs:
+                      for smali_file in smali_dir.rglob("*.smali"):
+                          with open(smali_file, 'r') as f:
+                              content = f.read()
+                          
+                          if ".method public constructor <init>" in content or ".method public onCreate" in content:
+                              # Inject loadLibrary call
+                              if 'const-string v0, "frida-gadget"' not in content:
+                                  injection = '''
+          .method static constructor <clinit>()V
+              .locals 1
+              const-string v0, "frida-gadget"
+              invoke-static {v0}, Ljava/lang/System;->loadLibrary(Ljava/lang/String;)V
+              return-void
+          .end method
+          '''
+                                  if ".method static constructor <clinit>" not in content:
+                                      content = content.replace(".super", injection + "\n.super", 1)
+                                      with open(smali_file, 'w') as f:
+                                          f.write(content)
+                                      injection_done = True
+                                      steps.append({"step": "inject_smali", "success": True, "file": str(smali_file)})
+                                      break
+                          if injection_done:
+                              break
+                      if injection_done:
+                          break
+                  
+                  # Step 5: Rebuild APK
+                  rebuilt = work_dir / "rebuilt.apk"
+                  cmd = f"apktool b {decompiled} -o {rebuilt}"
+                  result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=120)
+                  steps.append({"step": "rebuild", "success": result.returncode == 0, "output": result.stderr[:500]})
+                  
+                  if not rebuilt.exists():
+                      return {"success": False, "error": "Rebuild failed", "steps": steps}
+                  
+                  # Step 6: Sign APK
+                  signed = work_dir / "signed.apk"
+                  
+                  # Create keystore if needed
+                  keystore = work_dir / "debug.keystore"
+                  cmd = f'keytool -genkey -v -keystore {keystore} -alias androiddebugkey -keyalg RSA -keysize 2048 -validity 10000 -storepass android -keypass android -dname "CN=Android Debug,O=Android,C=US"'
+                  subprocess.run(cmd, shell=True, capture_output=True, timeout=30)
+                  
+                  # Align
+                  aligned = work_dir / "aligned.apk"
+                  cmd = f"zipalign -v 4 {rebuilt} {aligned}"
+                  subprocess.run(cmd, shell=True, capture_output=True, timeout=30)
+                  
+                  # Sign
+                  cmd = f"apksigner sign --ks {keystore} --ks-pass pass:android --key-pass pass:android --out {signed} {aligned}"
+                  result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=30)
+                  steps.append({"step": "sign", "success": result.returncode == 0})
+                  
+                  if signed.exists():
+                      final_path = PATCHED_DIR / f"{apk_path.stem}.patched.apk"
+                      shutil.copy(signed, final_path)
+                      
+                      return {
+                          "success": True,
+                          "original_apk": str(apk_path),
+                          "patched_apk": str(final_path),
+                          "steps": steps
+                      }
+                  else:
+                      return {"success": False, "error": "Signing failed", "steps": steps}
+                  
+              except Exception as e:
+                  return {"success": False, "error": str(e), "traceback": traceback.format_exc()}
+          
+          @app.post("/apk/install")
+          def install_apk(apk_path: str):
+              try:
+                  result = subprocess.run(
+                      f"adb -s {ADB_DEVICE} install -r -g {apk_path}",
+                      shell=True, capture_output=True, text=True, timeout=120
+                  )
+                  success = "Success" in result.stdout or result.returncode == 0
+                  return {"success": success, "apk_path": apk_path, "stdout": result.stdout, "stderr": result.stderr}
+              except Exception as e:
+                  return {"success": False, "error": str(e)}
+          
+          @app.post("/apk/launch")
+          def launch_app(package_name: str):
+              try:
+                  result = subprocess.run(
+                      f"adb -s {ADB_DEVICE} shell monkey -p {package_name} -c android.intent.category.LAUNCHER 1",
+                      shell=True, capture_output=True, text=True
+                  )
+                  return {"success": result.returncode == 0, "package": package_name, "stdout": result.stdout, "stderr": result.stderr}
+              except Exception as e:
+                  return {"success": False, "error": str(e)}
+          
+          @app.post("/apk/decompile")
+          def decompile_apk(request: DecompileRequest):
+              """Decompile APK using various tools"""
+              try:
+                  apk_path = Path(request.apk_path)
+                  if not apk_path.exists():
+                      return {"success": False, "error": "APK not found"}
+                  
+                  output = Path(request.output_dir) if request.output_dir else DECOMPILED_DIR / apk_path.stem
+                  output.mkdir(parents=True, exist_ok=True)
+                  
+                  if request.tool == "jadx":
+                      cmd = f"jadx -d {output} --deobf {apk_path}"
+                  elif request.tool == "apktool":
+                      cmd = f"apktool d -f -o {output} {apk_path}"
+                  elif request.tool == "cfr":
+                      # First convert to jar
+                      jar_path = output / f"{apk_path.stem}.jar"
+                      subprocess.run(f"d2j-dex2jar -f -o {jar_path} {apk_path}", shell=True, timeout=120)
+                      cmd = f"cfr {jar_path} --outputdir {output}/src"
+                  elif request.tool == "enjarify":
+                      jar_path = output / f"{apk_path.stem}.jar"
+                      cmd = f"enjarify {apk_path} -o {jar_path}"
+                  else:
+                      return {"success": False, "error": f"Unknown tool: {request.tool}"}
+                  
+                  result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=300)
+                  
+                  return {
+                      "success": result.returncode == 0,
+                      "tool": request.tool,
+                      "output_dir": str(output),
+                      "stdout": result.stdout[-2000:],
+                      "stderr": result.stderr[-1000:]
+                  }
+              except Exception as e:
+                  return {"success": False, "error": str(e)}
+          
+          # ============== Frida Operations ==============
+          
+          @app.post("/frida/connect")
+          def frida_connect():
+              global frida_device
+              try:
+                  subprocess.run(["adb", "-s", ADB_DEVICE, "forward", "tcp:27042", "tcp:27042"], check=True)
+                  frida_device = frida.get_device_manager().add_remote_device("127.0.0.1:27042")
+                  return {"success": True, "device": str(frida_device), "message": "Connected"}
+              except Exception as e:
+                  return {"success": False, "error": str(e)}
+          
+          @app.get("/frida/processes")
+          def frida_processes():
+              global frida_device
+              if not frida_device:
+                  return {"success": False, "error": "Not connected"}
+              try:
+                  procs = frida_device.enumerate_processes()
+                  return {"success": True, "processes": [{"pid": p.pid, "name": p.name} for p in procs]}
+              except Exception as e:
+                  return {"success": False, "error": str(e)}
+          
+          @app.post("/frida/attach")
+          def frida_attach(process_name: str = "Gadget"):
+              global frida_device, frida_session
+              if not frida_device:
+                  r = frida_connect()
+                  if not r.get("success"):
+                      return r
+              try:
+                  frida_session = frida_device.attach(process_name)
+                  return {"success": True, "message": f"Attached to {process_name}"}
+              except Exception as e:
+                  return {"success": False, "error": str(e)}
+          
+          @app.post("/frida/script")
+          def frida_load_script(request: FridaScriptRequest):
+              global frida_session, frida_scripts
+              if not frida_session:
+                  r = frida_attach(request.process_name)
+                  if not r.get("success"):
+                      return r
+              
+              messages = []
+              def on_message(msg, data):
+                  messages.append(msg)
+              
+              try:
+                  script = frida_session.create_script(request.script)
+                  script.on('message', on_message)
+                  script.load()
+                  frida_scripts[request.script_name] = script
+                  time.sleep(0.5)
+                  return {"success": True, "script_name": request.script_name, "messages": messages}
+              except Exception as e:
+                  return {"success": False, "error": str(e)}
+          
+          @app.post("/frida/script-file")
+          def frida_load_script_file(script_path: str, process_name: str = "Gadget"):
+              try:
+                  with open(script_path, 'r') as f:
+                      script_content = f.read()
+                  return frida_load_script(FridaScriptRequest(
+                      script=script_content,
+                      process_name=process_name,
+                      script_name=Path(script_path).stem
+                  ))
+              except Exception as e:
+                  return {"success": False, "error": str(e)}
+          
+          @app.post("/frida/ssl-bypass")
+          def frida_ssl_bypass(process_name: str = "Gadget"):
+              script_path = "/tmp/frida-scripts/ssl_bypass_universal.js"
+              if os.path.exists(script_path):
+                  return frida_load_script_file(script_path, process_name)
+              return {"success": False, "error": "SSL bypass script not found"}
+          
+          @app.post("/frida/root-bypass")
+          def frida_root_bypass(process_name: str = "Gadget"):
+              script_path = "/tmp/frida-scripts/root_bypass_universal.js"
+              if os.path.exists(script_path):
+                  return frida_load_script_file(script_path, process_name)
+              return {"success": False, "error": "Root bypass script not found"}
+          
+          @app.post("/frida/anti-debug-bypass")
+          def frida_debug_bypass(process_name: str = "Gadget"):
+              script_path = "/tmp/frida-scripts/anti_debug_bypass.js"
+              if os.path.exists(script_path):
+                  return frida_load_script_file(script_path, process_name)
+              return {"success": False, "error": "Anti-debug bypass script not found"}
+          
+          @app.post("/frida/dexguard-strings")
+          def frida_dexguard_strings(process_name: str = "Gadget"):
+              script_path = "/tmp/frida-scripts/dexguard_strings.js"
+              if os.path.exists(script_path):
+                  return frida_load_script_file(script_path, process_name)
+              return {"success": False, "error": "DexGuard strings script not found"}
+          
+          @app.get("/frida/scripts")
+          def frida_list_scripts():
+              return {"success": True, "scripts": list(frida_scripts.keys())}
+          
+          @app.get("/frida/scripts-available")
+          def frida_available_scripts():
+              scripts = []
+              for f in Path("/tmp/frida-scripts").glob("*.js"):
+                  scripts.append({"name": f.stem, "path": str(f)})
+              return {"success": True, "scripts": scripts}
+          
+          # ============== File Operations ==============
+          
+          @app.post("/upload")
+          async def upload_file(file: UploadFile = File(...), destination: str = Form(default="/tmp/apks")):
+              try:
+                  dest = Path(destination)
+                  dest.mkdir(parents=True, exist_ok=True)
+                  filepath = dest / file.filename
+                  
+                  content = await file.read()
+                  with open(filepath, "wb") as f:
+                      f.write(content)
+                  
+                  return {"success": True, "filepath": str(filepath), "size_bytes": len(content)}
+              except Exception as e:
+                  return {"success": False, "error": str(e)}
+          
+          @app.post("/download")
+          def download_file(url: str, destination: str = "/tmp/downloads", filename: Optional[str] = None):
+              try:
+                  dest = Path(destination)
+                  dest.mkdir(parents=True, exist_ok=True)
+                  
+                  fname = filename or url.split('/')[-1].split('?')[0]
+                  filepath = dest / fname
+                  
+                  result = subprocess.run(f'curl -L -o "{filepath}" "{url}"', shell=True, capture_output=True, timeout=600)
+                  
+                  if filepath.exists() and filepath.stat().st_size > 0:
+                      return {"success": True, "filepath": str(filepath), "size_mb": round(filepath.stat().st_size / (1024*1024), 2)}
+                  return {"success": False, "error": "Download failed"}
+              except Exception as e:
+                  return {"success": False, "error": str(e)}
+          
+          @app.get("/ls")
+          def list_dir(path: str = "/tmp"):
+              try:
+                  p = Path(path)
+                  if not p.exists():
+                      return {"success": False, "error": "Path not found"}
+                  items = [{"name": i.name, "is_dir": i.is_dir(), "size": i.stat().st_size if i.is_file() else None} for i in p.iterdir()]
+                  return {"success": True, "path": path, "items": items}
+              except Exception as e:
+                  return {"success": False, "error": str(e)}
+          
+          @app.get("/read")
+          def read_file(path: str, max_size: int = 1048576):
+              try:
+                  p = Path(path)
+                  if not p.exists():
+                      return {"success": False, "error": "File not found"}
+                  if p.stat().st_size > max_size:
+                      return {"success": False, "error": f"File too large (>{max_size} bytes)"}
+                  with open(p, 'r') as f:
+                      return {"success": True, "path": path, "content": f.read()}
+              except Exception as e:
+                  return {"success": False, "error": str(e)}
+          
+          @app.get("/disk")
+          def disk_usage():
+              import shutil
+              total, used, free = shutil.disk_usage("/")
+              return {
+                  "total_gb": round(total / (1024**3), 2),
+                  "used_gb": round(used / (1024**3), 2),
+                  "free_gb": round(free / (1024**3), 2),
+                  "percent_used": round(used / total * 100, 1)
+              }
+          
+          if __name__ == "__main__":
+              import uvicorn
+              uvicorn.run(app, host="0.0.0.0", port=8000)
+          SERVEREOF
+          
+          echo "✅ Remote executor server created"
+
+      - name: Start ngrok and Server
         run: |
           PORT=${{ inputs.server_port }}
           
-          # Start ngrok
-          ngrok http $PORT --log=stdout > /tmp/ngrok.log 2>&1 &
-          sleep 5
-          
-          # Get ngrok URL
-          NGROK_URL=$(curl -s http://localhost:4040/api/tunnels | grep -oP '"public_url":"https://[^"]+' | cut -d'"' -f4)
-          
-          if [ -z "$NGROK_URL" ]; then
-            echo "❌ Failed to get ngrok URL"
-            cat /tmp/ngrok.log
-            exit 1
-          fi
-          
-          echo "NGROK_URL=$NGROK_URL" >> $GITHUB_ENV
-          
-          # Start remote executor
-          cd /tmp
-          python3 ultimate_android_executor.py &
+          # Start server
+          python3 /tmp/android_security_executor.py &
           SERVER_PID=$!
           echo "SERVER_PID=$SERVER_PID" >> $GITHUB_ENV
-          
           sleep 5
           
           # Verify server
-          if curl -s "http://localhost:$PORT/health" | grep -q "healthy"; then
-            echo ""
-            echo "════════════════════════════════════════════════════════════════════════════"
-            echo "🎯 ULTIMATE ANDROID SECURITY TESTING PLATFORM IS READY!"
-            echo "════════════════════════════════════════════════════════════════════════════"
-            echo ""
-            echo "📡 PUBLIC URL: $NGROK_URL"
-            echo ""
-            echo "📚 API Documentation: $NGROK_URL/docs"
-            echo ""
-            echo "🔧 Quick Start:"
-            echo "   curl $NGROK_URL/health"
-            echo "   curl $NGROK_URL/tools/list"
-            echo ""
-            echo "⏰ Session Duration: ${{ inputs.session_duration }} minutes"
-            echo "📱 Android API: ${{ inputs.android_api }}"
-            echo "🔓 Root Enabled: ${{ inputs.enable_root }}"
-            echo ""
-            echo "════════════════════════════════════════════════════════════════════════════"
-          else
-            echo "❌ Server health check failed"
-            exit 1
-          fi
+          curl -s http://localhost:$PORT/health || { echo "Server failed to start"; exit 1; }
+          
+          # Start ngrok
+          ngrok http $PORT --log=stdout > /tmp/ngrok.log 2>&1 &
+          NGROK_PID=$!
+          echo "NGROK_PID=$NGROK_PID" >> $GITHUB_ENV
+          sleep 5
+          
+          # Get URL
+          NGROK_URL=$(curl -s http://localhost:4040/api/tunnels | jq -r '.tunnels[0].public_url')
+          
+          echo ""
+          echo "════════════════════════════════════════════════════════════════════"
+          echo "🎯 ANDROID SECURITY TOOLKIT READY!"
+          echo "════════════════════════════════════════════════════════════════════"
+          echo "📡 PUBLIC URL: $NGROK_URL"
+          echo ""
+          echo "🔧 Available Tools:"
+          echo "   • Decompilers: JADX, CFR, Procyon, APKTool"
+          echo "   • Analysis: APKiD, Androguard, Radare2"
+          echo "   • Instrumentation: Frida ${frida --version}, Objection"
+          echo "   • Utilities: smali/baksmali, dex2jar, enjarify"
+          echo ""
+          echo "📚 API Docs: $NGROK_URL/docs"
+          echo "⏰ Session: ${{ inputs.session_duration }} minutes"
+          echo "════════════════════════════════════════════════════════════════════"
+          echo ""
 
       - name: Keep Session Alive
         run: |
@@ -2607,26 +1541,21 @@ EXECUTOR_EOF
             sleep $interval
             elapsed=$((elapsed + interval))
             
-            emulator_ok="❌"
-            server_ok="❌"
-            frida_ok="❌"
+            emu="❌"
+            srv="❌"
             
             if adb -s localhost:5555 shell getprop sys.boot_completed 2>/dev/null | grep -q "1"; then
-              emulator_ok="✅"
+              emu="✅"
             fi
             
             if curl -s http://localhost:${{ inputs.server_port }}/health | grep -q "healthy"; then
-              server_ok="✅"
+              srv="✅"
             fi
             
-            if curl -s http://localhost:${{ inputs.server_port }}/health | grep -q '"frida_server_running": true'; then
-              frida_ok="✅"
-            fi
-            
-            echo "[$(date +%H:%M:%S)] Emulator: $emulator_ok | Server: $server_ok | Frida: $frida_ok | Progress: ${elapsed}s / $((duration * 60))s"
+            echo "[$(date +%H:%M:%S)] Emulator: $emu | Server: $srv | ${elapsed}s / $((duration * 60))s"
           done
           
-          echo "⏰ Session ended after ${duration} minutes"
+          echo "⏰ Session ended"
 
       - name: Cleanup
         if: always()
@@ -2637,4 +1566,4 @@ EXECUTOR_EOF
           kill $SERVER_PID 2>/dev/null || true
           adb -s localhost:5555 emu kill 2>/dev/null || true
           adb kill-server 2>/dev/null || true
-          echo "✅ Cleanup complete"
+          echo "✅ Done"
