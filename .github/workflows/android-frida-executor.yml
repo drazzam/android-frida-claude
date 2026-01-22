@@ -93,7 +93,8 @@ jobs:
             lief \
             httpx \
             psutil \
-            aiofiles
+            aiofiles \
+            python-multipart
           echo "✅ Python dependencies installed"
           echo "Frida version: $(frida --version)"
           echo "Objection version: $(objection version)"
