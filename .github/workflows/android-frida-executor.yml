@@ -1,0 +1,944 @@
+name: Android Emulator + Frida + Claude Remote Executor
+
+on:
+  workflow_dispatch:
+    inputs:
+      session_duration:
+        description: 'Session duration in minutes (max 60)'
+        required: true
+        default: '30'
+        type: choice
+        options:
+          - '15'
+          - '30'
+          - '45'
+          - '60'
+      android_api:
+        description: 'Android API level'
+        required: true
+        default: '30'
+        type: choice
+        options:
+          - '28'
+          - '29'
+          - '30'
+          - '31'
+          - '33'
+      server_port:
+        description: 'Remote executor server port'
+        required: true
+        default: '8000'
+
+jobs:
+  android-frida-executor:
+    runs-on: ubuntu-latest
+    timeout-minutes: 65
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      #########################################
+      # CRITICAL: Enable KVM (FREE since 2024)
+      #########################################
+      - name: Enable KVM acceleration
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          echo "✅ KVM enabled:"
+          ls -la /dev/kvm
+
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Setup Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            android-tools-adb \
+            apktool \
+            zipalign \
+            aapt \
+            wget \
+            curl \
+            jq \
+            unzip
+          echo "✅ System dependencies installed"
+
+      - name: Install Python dependencies
+        run: |
+          pip install --upgrade pip
+          pip install \
+            fastapi \
+            uvicorn \
+            pyngrok \
+            frida-tools \
+            frida \
+            objection \
+            lief \
+            httpx \
+            psutil \
+            aiofiles
+          echo "✅ Python dependencies installed"
+          echo "Frida version: $(frida --version)"
+          echo "Objection version: $(objection version)"
+
+      - name: Install Emulator & System Image
+        run: |
+          sdkmanager --install "emulator"
+          sdkmanager --install "system-images;android-${{ inputs.android_api }};google_apis;x86_64"
+          sdkmanager --install "platform-tools"
+          echo "✅ Android SDK components installed"
+
+      - name: Create Android Virtual Device (AVD)
+        run: |
+          echo "no" | avdmanager create avd \
+            --force \
+            --name "frida_avd" \
+            --package "system-images;android-${{ inputs.android_api }};google_apis;x86_64" \
+            --device "pixel_4"
+          echo "✅ AVD 'frida_avd' created"
+
+      - name: Setup ngrok
+        run: |
+          curl -s https://ngrok-agent.s3.amazonaws.com/ngrok.asc | \
+            sudo tee /etc/apt/trusted.gpg.d/ngrok.asc >/dev/null
+          echo "deb https://ngrok-agent.s3.amazonaws.com buster main" | \
+            sudo tee /etc/apt/sources.list.d/ngrok.list
+          sudo apt-get update && sudo apt-get install -y ngrok
+          ngrok config add-authtoken ${{ secrets.NGROK_AUTH_TOKEN }}
+          echo "✅ ngrok configured"
+
+      - name: Start Android Emulator
+        run: |
+          echo "🚀 Starting emulator with KVM acceleration..."
+          
+          $ANDROID_HOME/emulator/emulator -avd frida_avd \
+            -no-window \
+            -no-audio \
+            -no-boot-anim \
+            -gpu swiftshader_indirect \
+            -port 5554 \
+            -read-only &
+          
+          EMULATOR_PID=$!
+          echo "EMULATOR_PID=$EMULATOR_PID" >> $GITHUB_ENV
+          
+          # Wait for device to be detected
+          echo "⏳ Waiting for emulator to be detected..."
+          adb wait-for-device
+          
+          # Wait for boot completion
+          echo "⏳ Waiting for boot completion..."
+          boot_timeout=180
+          boot_elapsed=0
+          while [ "$(adb shell getprop sys.boot_completed 2>/dev/null)" != "1" ]; do
+            if [ $boot_elapsed -ge $boot_timeout ]; then
+              echo "❌ Boot timeout after ${boot_timeout}s"
+              exit 1
+            fi
+            sleep 5
+            boot_elapsed=$((boot_elapsed + 5))
+            echo "  Boot progress: ${boot_elapsed}s..."
+          done
+          
+          echo "✅ Emulator booted in ${boot_elapsed}s!"
+          adb devices -l
+          
+          # Enable ADB over TCP
+          adb tcpip 5555
+          sleep 2
+          adb connect localhost:5555
+          echo "✅ ADB TCP enabled on port 5555"
+
+      - name: Verify Emulator Status
+        run: |
+          echo "📱 Device Information:"
+          adb shell getprop ro.product.model
+          adb shell getprop ro.build.version.release
+          adb shell getprop ro.product.cpu.abi
+          echo ""
+          echo "📦 Available disk space on device:"
+          adb shell df -h /data
+
+      - name: Create working directories
+        run: |
+          mkdir -p /tmp/apks
+          mkdir -p /tmp/patched
+          mkdir -p /tmp/frida-scripts
+          mkdir -p /tmp/downloads
+          echo "✅ Working directories created"
+
+      - name: Start Remote Executor Server
+        run: |
+          # Create the enhanced remote executor server
+          cat > /tmp/android_remote_executor.py << 'EXECUTOR_EOF'
+          #!/usr/bin/env python3
+          """
+          Android + Frida Remote Executor for Claude
+          ============================================
+          Enables Claude to autonomously control Android emulator and Frida.
+          """
+
+          import os
+          import sys
+          import json
+          import time
+          import asyncio
+          import subprocess
+          import traceback
+          from io import StringIO
+          from typing import Optional, Dict, Any, List
+          from contextlib import redirect_stdout, redirect_stderr
+          from pathlib import Path
+
+          from fastapi import FastAPI, HTTPException, UploadFile, File, Form
+          from fastapi.middleware.cors import CORSMiddleware
+          from fastapi.responses import FileResponse
+          from pydantic import BaseModel
+          import frida
+
+          app = FastAPI(
+              title="Android + Frida Remote Executor",
+              description="Claude's autonomous Android security testing interface",
+              version="2.0.0"
+          )
+
+          app.add_middleware(
+              CORSMiddleware,
+              allow_origins=["*"],
+              allow_credentials=True,
+              allow_methods=["*"],
+              allow_headers=["*"],
+          )
+
+          # Global state
+          execution_namespace = {"__builtins__": __builtins__}
+          frida_device = None
+          frida_session = None
+          frida_scripts = {}
+
+          # Working directories
+          WORK_DIR = Path("/tmp")
+          APK_DIR = WORK_DIR / "apks"
+          PATCHED_DIR = WORK_DIR / "patched"
+          SCRIPTS_DIR = WORK_DIR / "frida-scripts"
+          DOWNLOADS_DIR = WORK_DIR / "downloads"
+
+          # ============== Pydantic Models ==============
+
+          class CodeRequest(BaseModel):
+              code: str
+              timeout: Optional[int] = 300
+
+          class BashRequest(BaseModel):
+              command: str
+              timeout: Optional[int] = 300
+
+          class ADBRequest(BaseModel):
+              command: str
+              timeout: Optional[int] = 60
+
+          class FridaScriptRequest(BaseModel):
+              script: str
+              process_name: Optional[str] = "Gadget"
+              script_name: Optional[str] = "default"
+
+          class FridaHookRequest(BaseModel):
+              class_name: str
+              method_name: str
+              script_name: Optional[str] = None
+
+          class APKPatchRequest(BaseModel):
+              apk_path: str
+              architecture: str = "x86_64"
+
+          class DownloadRequest(BaseModel):
+              url: str
+              destination: Optional[str] = None
+              filename: Optional[str] = None
+
+          # ============== Core Endpoints ==============
+
+          @app.get("/")
+          def root():
+              return {
+                  "status": "online",
+                  "service": "Android + Frida Remote Executor for Claude",
+                  "version": "2.0.0",
+                  "capabilities": {
+                      "python": "/execute - Execute Python code",
+                      "bash": "/bash - Execute bash commands",
+                      "adb": "/adb - Execute ADB commands",
+                      "frida": {
+                          "connect": "/frida/connect - Connect to Frida device",
+                          "attach": "/frida/attach - Attach to process",
+                          "load_script": "/frida/script - Load Frida script",
+                          "list_processes": "/frida/processes - List running processes",
+                          "ssl_bypass": "/frida/ssl-bypass - Bypass SSL pinning"
+                      },
+                      "apk": {
+                          "patch": "/apk/patch - Patch APK with Frida Gadget",
+                          "install": "/apk/install - Install APK on emulator",
+                          "info": "/apk/info - Get APK information"
+                      },
+                      "files": {
+                          "upload": "/upload - Upload file",
+                          "download": "/download - Download from URL",
+                          "list": "/ls - List directory",
+                          "read": "/read - Read file content"
+                      },
+                      "system": {
+                          "health": "/health - System health check",
+                          "disk": "/disk - Disk usage"
+                      }
+                  }
+              }
+
+          @app.get("/health")
+          def health():
+              import psutil
+              
+              # Check emulator status
+              adb_result = subprocess.run(
+                  ["adb", "devices"], 
+                  capture_output=True, 
+                  text=True
+              )
+              emulator_connected = "emulator" in adb_result.stdout or "localhost:5555" in adb_result.stdout
+              
+              return {
+                  "status": "healthy",
+                  "cpu_percent": psutil.cpu_percent(),
+                  "memory_percent": psutil.virtual_memory().percent,
+                  "disk_free_gb": round(psutil.disk_usage('/').free / (1024**3), 2),
+                  "emulator_connected": emulator_connected,
+                  "frida_version": frida.__version__,
+                  "frida_session_active": frida_session is not None
+              }
+
+          # ============== Python Execution ==============
+
+          @app.post("/execute")
+          def execute_code(request: CodeRequest):
+              """Execute Python code and return output + result"""
+              stdout_capture = StringIO()
+              stderr_capture = StringIO()
+              result = None
+              error = None
+              
+              try:
+                  with redirect_stdout(stdout_capture), redirect_stderr(stderr_capture):
+                      try:
+                          exec(request.code, execution_namespace)
+                          lines = request.code.strip().split('\n')
+                          if lines:
+                              last_line = lines[-1].strip()
+                              if last_line and not any(last_line.startswith(kw) for kw in 
+                                  ['import', 'from', 'def', 'class', 'if', 'for', 'while', 'with', 'try', '#', 'print', '=', ' ']):
+                                  try:
+                                      result = eval(last_line, execution_namespace)
+                                  except:
+                                      pass
+                      except SyntaxError:
+                          result = eval(request.code, execution_namespace)
+              except Exception as e:
+                  error = f"{type(e).__name__}: {str(e)}\n{traceback.format_exc()}"
+              
+              return {
+                  "success": error is None,
+                  "stdout": stdout_capture.getvalue(),
+                  "stderr": stderr_capture.getvalue(),
+                  "result": repr(result) if result is not None else None,
+                  "error": error
+              }
+
+          # ============== Bash Execution ==============
+
+          @app.post("/bash")
+          def execute_bash(request: BashRequest):
+              """Execute bash command and return output"""
+              try:
+                  result = subprocess.run(
+                      request.command,
+                      shell=True,
+                      capture_output=True,
+                      text=True,
+                      timeout=request.timeout
+                  )
+                  return {
+                      "success": result.returncode == 0,
+                      "returncode": result.returncode,
+                      "stdout": result.stdout,
+                      "stderr": result.stderr
+                  }
+              except subprocess.TimeoutExpired:
+                  return {"success": False, "error": f"Command timed out after {request.timeout}s"}
+              except Exception as e:
+                  return {"success": False, "error": str(e)}
+
+          # ============== ADB Commands ==============
+
+          @app.post("/adb")
+          def execute_adb(request: ADBRequest):
+              """Execute ADB command on connected emulator"""
+              try:
+                  full_command = f"adb {request.command}"
+                  result = subprocess.run(
+                      full_command,
+                      shell=True,
+                      capture_output=True,
+                      text=True,
+                      timeout=request.timeout
+                  )
+                  return {
+                      "success": result.returncode == 0,
+                      "command": full_command,
+                      "stdout": result.stdout,
+                      "stderr": result.stderr
+                  }
+              except subprocess.TimeoutExpired:
+                  return {"success": False, "error": f"ADB command timed out after {request.timeout}s"}
+              except Exception as e:
+                  return {"success": False, "error": str(e)}
+
+          @app.get("/adb/devices")
+          def adb_devices():
+              """List connected ADB devices"""
+              result = subprocess.run(["adb", "devices", "-l"], capture_output=True, text=True)
+              lines = result.stdout.strip().split('\n')[1:]  # Skip header
+              devices = []
+              for line in lines:
+                  if line.strip():
+                      parts = line.split()
+                      if len(parts) >= 2:
+                          devices.append({
+                              "id": parts[0],
+                              "state": parts[1],
+                              "info": ' '.join(parts[2:]) if len(parts) > 2 else ""
+                          })
+              return {"success": True, "devices": devices}
+
+          @app.get("/adb/packages")
+          def adb_list_packages(filter: Optional[str] = None):
+              """List installed packages on emulator"""
+              cmd = "adb shell pm list packages"
+              if filter:
+                  cmd += f" | grep -i {filter}"
+              result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
+              packages = [p.replace("package:", "") for p in result.stdout.strip().split('\n') if p]
+              return {"success": True, "packages": packages, "count": len(packages)}
+
+          # ============== Frida Operations ==============
+
+          @app.post("/frida/connect")
+          def frida_connect():
+              """Connect to Frida on the emulator"""
+              global frida_device
+              try:
+                  # Forward Frida port
+                  subprocess.run(["adb", "forward", "tcp:27042", "tcp:27042"], check=True)
+                  
+                  # Connect to remote device
+                  frida_device = frida.get_device_manager().add_remote_device("127.0.0.1:27042")
+                  
+                  return {
+                      "success": True,
+                      "device": str(frida_device),
+                      "message": "Frida connected successfully"
+                  }
+              except Exception as e:
+                  return {"success": False, "error": str(e)}
+
+          @app.get("/frida/processes")
+          def frida_list_processes():
+              """List processes visible to Frida"""
+              global frida_device
+              if not frida_device:
+                  return {"success": False, "error": "Frida not connected. Call /frida/connect first"}
+              
+              try:
+                  processes = frida_device.enumerate_processes()
+                  return {
+                      "success": True,
+                      "processes": [{"pid": p.pid, "name": p.name} for p in processes]
+                  }
+              except Exception as e:
+                  return {"success": False, "error": str(e)}
+
+          @app.post("/frida/attach")
+          def frida_attach(process_name: str = "Gadget"):
+              """Attach Frida to a process"""
+              global frida_device, frida_session
+              
+              if not frida_device:
+                  # Auto-connect
+                  connect_result = frida_connect()
+                  if not connect_result.get("success"):
+                      return connect_result
+              
+              try:
+                  frida_session = frida_device.attach(process_name)
+                  return {
+                      "success": True,
+                      "message": f"Attached to process: {process_name}",
+                      "session": str(frida_session)
+                  }
+              except Exception as e:
+                  return {"success": False, "error": str(e)}
+
+          @app.post("/frida/script")
+          def frida_load_script(request: FridaScriptRequest):
+              """Load and run a Frida script"""
+              global frida_session, frida_scripts
+              
+              if not frida_session:
+                  # Try to attach to default process
+                  attach_result = frida_attach(request.process_name)
+                  if not attach_result.get("success"):
+                      return attach_result
+              
+              messages = []
+              
+              def on_message(message, data):
+                  messages.append(message)
+              
+              try:
+                  script = frida_session.create_script(request.script)
+                  script.on('message', on_message)
+                  script.load()
+                  
+                  frida_scripts[request.script_name] = script
+                  
+                  # Wait a moment for immediate messages
+                  time.sleep(0.5)
+                  
+                  return {
+                      "success": True,
+                      "script_name": request.script_name,
+                      "message": "Script loaded successfully",
+                      "initial_messages": messages
+                  }
+              except Exception as e:
+                  return {"success": False, "error": str(e)}
+
+          @app.post("/frida/ssl-bypass")
+          def frida_ssl_bypass(process_name: str = "Gadget"):
+              """Load SSL pinning bypass script"""
+              ssl_script = '''
+              Java.perform(function() {
+                  console.log("[*] SSL Pinning Bypass Loaded");
+                  
+                  // TrustManager bypass
+                  var TrustManager = Java.registerClass({
+                      name: 'com.frida.TrustManager',
+                      implements: [Java.use('javax.net.ssl.X509TrustManager')],
+                      methods: {
+                          checkClientTrusted: function(chain, authType) {},
+                          checkServerTrusted: function(chain, authType) {},
+                          getAcceptedIssuers: function() { return []; }
+                      }
+                  });
+                  
+                  var SSLContext = Java.use('javax.net.ssl.SSLContext');
+                  var TrustManagers = [TrustManager.$new()];
+                  var SSLContext_init = SSLContext.init.overload(
+                      '[Ljavax.net.ssl.KeyManager;', 
+                      '[Ljavax.net.ssl.TrustManager;', 
+                      'java.security.SecureRandom'
+                  );
+                  
+                  SSLContext_init.implementation = function(km, tm, sr) {
+                      console.log("[+] Bypassing SSL Pinning");
+                      SSLContext_init.call(this, km, TrustManagers, sr);
+                  };
+                  
+                  // OkHttp Certificate Pinner bypass
+                  try {
+                      var CertificatePinner = Java.use('okhttp3.CertificatePinner');
+                      CertificatePinner.check.overload('java.lang.String', 'java.util.List').implementation = function(hostname, peerCertificates) {
+                          console.log("[+] OkHttp: Bypassing pin for " + hostname);
+                      };
+                  } catch(e) {
+                      console.log("[*] OkHttp not found");
+                  }
+                  
+                  console.log("[*] SSL Bypass Active!");
+              });
+              '''
+              return frida_load_script(FridaScriptRequest(
+                  script=ssl_script,
+                  process_name=process_name,
+                  script_name="ssl_bypass"
+              ))
+
+          @app.post("/frida/network-monitor")
+          def frida_network_monitor(process_name: str = "Gadget"):
+              """Load network monitoring script"""
+              network_script = '''
+              Java.perform(function() {
+                  console.log("[*] Network Monitor Active");
+                  
+                  var URL = Java.use('java.net.URL');
+                  URL.$init.overload('java.lang.String').implementation = function(url) {
+                      console.log("[URL] " + url);
+                      return this.$init(url);
+                  };
+                  
+                  try {
+                      var RealCall = Java.use('okhttp3.internal.connection.RealCall');
+                      RealCall.execute.implementation = function() {
+                          var request = this.request();
+                          console.log("[OkHttp] " + request.method() + " " + request.url().toString());
+                          return this.execute();
+                      };
+                  } catch(e) {
+                      console.log("[*] OkHttp not found");
+                  }
+              });
+              '''
+              return frida_load_script(FridaScriptRequest(
+                  script=network_script,
+                  process_name=process_name,
+                  script_name="network_monitor"
+              ))
+
+          @app.get("/frida/scripts")
+          def frida_list_scripts():
+              """List loaded Frida scripts"""
+              return {
+                  "success": True,
+                  "scripts": list(frida_scripts.keys())
+              }
+
+          @app.delete("/frida/script/{script_name}")
+          def frida_unload_script(script_name: str):
+              """Unload a Frida script"""
+              global frida_scripts
+              if script_name in frida_scripts:
+                  try:
+                      frida_scripts[script_name].unload()
+                      del frida_scripts[script_name]
+                      return {"success": True, "message": f"Script '{script_name}' unloaded"}
+                  except Exception as e:
+                      return {"success": False, "error": str(e)}
+              return {"success": False, "error": f"Script '{script_name}' not found"}
+
+          # ============== APK Operations ==============
+
+          @app.post("/apk/patch")
+          def patch_apk(request: APKPatchRequest):
+              """Patch APK with Frida Gadget using objection"""
+              try:
+                  apk_path = Path(request.apk_path)
+                  if not apk_path.exists():
+                      return {"success": False, "error": f"APK not found: {apk_path}"}
+                  
+                  # Run objection patchapk
+                  cmd = f"objection patchapk -s {apk_path} -a {request.architecture}"
+                  result = subprocess.run(
+                      cmd,
+                      shell=True,
+                      capture_output=True,
+                      text=True,
+                      timeout=300
+                  )
+                  
+                  # Find patched APK
+                  patched_name = apk_path.stem + ".objection.apk"
+                  patched_path = apk_path.parent / patched_name
+                  
+                  if patched_path.exists():
+                      return {
+                          "success": True,
+                          "original_apk": str(apk_path),
+                          "patched_apk": str(patched_path),
+                          "message": "APK patched with Frida Gadget successfully"
+                      }
+                  else:
+                      return {
+                          "success": False,
+                          "error": "Patching failed",
+                          "stdout": result.stdout,
+                          "stderr": result.stderr
+                      }
+              except Exception as e:
+                  return {"success": False, "error": str(e)}
+
+          @app.post("/apk/install")
+          def install_apk(apk_path: str):
+              """Install APK on emulator"""
+              try:
+                  result = subprocess.run(
+                      f"adb install -r {apk_path}",
+                      shell=True,
+                      capture_output=True,
+                      text=True,
+                      timeout=120
+                  )
+                  success = "Success" in result.stdout or result.returncode == 0
+                  return {
+                      "success": success,
+                      "apk_path": apk_path,
+                      "stdout": result.stdout,
+                      "stderr": result.stderr
+                  }
+              except Exception as e:
+                  return {"success": False, "error": str(e)}
+
+          @app.get("/apk/info")
+          def apk_info(apk_path: str):
+              """Get APK information using aapt"""
+              try:
+                  result = subprocess.run(
+                      f"aapt dump badging {apk_path}",
+                      shell=True,
+                      capture_output=True,
+                      text=True
+                  )
+                  
+                  info = {"raw": result.stdout}
+                  
+                  # Parse key info
+                  for line in result.stdout.split('\n'):
+                      if line.startswith("package:"):
+                          parts = line.split("'")
+                          info["package_name"] = parts[1] if len(parts) > 1 else None
+                          info["version_code"] = parts[3] if len(parts) > 3 else None
+                          info["version_name"] = parts[5] if len(parts) > 5 else None
+                      elif line.startswith("application-label:"):
+                          info["app_name"] = line.split("'")[1] if "'" in line else None
+                      elif line.startswith("sdkVersion:"):
+                          info["min_sdk"] = line.split("'")[1] if "'" in line else None
+                      elif line.startswith("targetSdkVersion:"):
+                          info["target_sdk"] = line.split("'")[1] if "'" in line else None
+                  
+                  return {"success": True, "info": info}
+              except Exception as e:
+                  return {"success": False, "error": str(e)}
+
+          @app.post("/apk/launch")
+          def launch_app(package_name: str):
+              """Launch an app on the emulator"""
+              try:
+                  # Try to launch main activity
+                  result = subprocess.run(
+                      f"adb shell monkey -p {package_name} -c android.intent.category.LAUNCHER 1",
+                      shell=True,
+                      capture_output=True,
+                      text=True
+                  )
+                  return {
+                      "success": result.returncode == 0,
+                      "package": package_name,
+                      "stdout": result.stdout,
+                      "stderr": result.stderr
+                  }
+              except Exception as e:
+                  return {"success": False, "error": str(e)}
+
+          # ============== File Operations ==============
+
+          @app.post("/upload")
+          async def upload_file(file: UploadFile = File(...), destination: str = Form(default="/tmp/apks")):
+              """Upload a file to the server"""
+              try:
+                  dest_path = Path(destination)
+                  dest_path.mkdir(parents=True, exist_ok=True)
+                  
+                  file_path = dest_path / file.filename
+                  
+                  with open(file_path, "wb") as f:
+                      content = await file.read()
+                      f.write(content)
+                  
+                  return {
+                      "success": True,
+                      "filepath": str(file_path),
+                      "filename": file.filename,
+                      "size_bytes": len(content)
+                  }
+              except Exception as e:
+                  return {"success": False, "error": str(e)}
+
+          @app.post("/download")
+          def download_file(request: DownloadRequest):
+              """Download a file from URL"""
+              try:
+                  dest_dir = Path(request.destination or DOWNLOADS_DIR)
+                  dest_dir.mkdir(parents=True, exist_ok=True)
+                  
+                  filename = request.filename or request.url.split('/')[-1].split('?')[0]
+                  filepath = dest_dir / filename
+                  
+                  result = subprocess.run(
+                      f'wget -q --show-progress -O "{filepath}" "{request.url}"',
+                      shell=True,
+                      capture_output=True,
+                      text=True,
+                      timeout=3600
+                  )
+                  
+                  if filepath.exists():
+                      size_mb = filepath.stat().st_size / (1024 * 1024)
+                      return {
+                          "success": True,
+                          "filepath": str(filepath),
+                          "size_mb": round(size_mb, 2)
+                      }
+                  else:
+                      return {"success": False, "error": "Download failed", "stderr": result.stderr}
+              except Exception as e:
+                  return {"success": False, "error": str(e)}
+
+          @app.get("/ls")
+          def list_directory(path: str = "/tmp"):
+              """List directory contents"""
+              try:
+                  p = Path(path)
+                  if not p.exists():
+                      return {"success": False, "error": f"Path does not exist: {path}"}
+                  
+                  items = []
+                  for item in p.iterdir():
+                      items.append({
+                          "name": item.name,
+                          "is_dir": item.is_dir(),
+                          "size": item.stat().st_size if item.is_file() else None
+                      })
+                  
+                  return {"success": True, "path": path, "items": items}
+              except Exception as e:
+                  return {"success": False, "error": str(e)}
+
+          @app.get("/read")
+          def read_file(path: str, max_size: int = 1048576):
+              """Read file content (max 1MB by default)"""
+              try:
+                  p = Path(path)
+                  if not p.exists():
+                      return {"success": False, "error": f"File not found: {path}"}
+                  
+                  if p.stat().st_size > max_size:
+                      return {"success": False, "error": f"File too large (>{max_size} bytes)"}
+                  
+                  with open(p, 'r') as f:
+                      content = f.read()
+                  
+                  return {"success": True, "path": path, "content": content}
+              except Exception as e:
+                  return {"success": False, "error": str(e)}
+
+          @app.get("/disk")
+          def disk_usage():
+              """Get disk usage information"""
+              import shutil
+              total, used, free = shutil.disk_usage("/")
+              return {
+                  "total_gb": round(total / (1024**3), 2),
+                  "used_gb": round(used / (1024**3), 2),
+                  "free_gb": round(free / (1024**3), 2),
+                  "percent_used": round(used / total * 100, 1)
+              }
+
+          # ============== Main ==============
+
+          if __name__ == "__main__":
+              import uvicorn
+              uvicorn.run(app, host="0.0.0.0", port=8000)
+          EXECUTOR_EOF
+
+          echo "✅ Remote executor server script created"
+
+      - name: Start ngrok and Remote Executor
+        run: |
+          PORT=${{ inputs.server_port }}
+          
+          # Start the remote executor server in background
+          python /tmp/android_remote_executor.py &
+          SERVER_PID=$!
+          echo "SERVER_PID=$SERVER_PID" >> $GITHUB_ENV
+          
+          # Wait for server to start
+          sleep 5
+          
+          # Start ngrok tunnel
+          ngrok http $PORT --log=stdout > /tmp/ngrok.log 2>&1 &
+          NGROK_PID=$!
+          echo "NGROK_PID=$NGROK_PID" >> $GITHUB_ENV
+          
+          sleep 5
+          
+          # Get public URL
+          PUBLIC_URL=$(curl -s http://localhost:4040/api/tunnels | jq -r '.tunnels[0].public_url')
+          
+          echo ""
+          echo "════════════════════════════════════════════════════════════════════"
+          echo "🎯 CLAUDE REMOTE EXECUTOR IS READY!"
+          echo "════════════════════════════════════════════════════════════════════"
+          echo ""
+          echo "📡 PUBLIC URL: $PUBLIC_URL"
+          echo ""
+          echo "🔗 Give Claude this URL to enable autonomous Android control:"
+          echo ""
+          echo "   executor = RemoteExecutor(\"$PUBLIC_URL\")"
+          echo ""
+          echo "📚 API Documentation: $PUBLIC_URL/docs"
+          echo ""
+          echo "⏰ Session will remain active for ${{ inputs.session_duration }} minutes"
+          echo "════════════════════════════════════════════════════════════════════"
+          echo ""
+          
+          # Save URL for later
+          echo "PUBLIC_URL=$PUBLIC_URL" >> $GITHUB_ENV
+
+      - name: Keep Session Alive
+        run: |
+          echo "📡 Session active. Monitoring services..."
+          
+          duration=${{ inputs.session_duration }}
+          elapsed=0
+          interval=60
+          
+          while [ $elapsed -lt $((duration * 60)) ]; do
+            sleep $interval
+            elapsed=$((elapsed + interval))
+            
+            # Health checks
+            emulator_ok="❌"
+            server_ok="❌"
+            
+            if adb shell getprop sys.boot_completed 2>/dev/null | grep -q "1"; then
+              emulator_ok="✅"
+            fi
+            
+            if curl -s http://localhost:${{ inputs.server_port }}/health | grep -q "healthy"; then
+              server_ok="✅"
+            fi
+            
+            echo "[$(date +%H:%M:%S)] Emulator: $emulator_ok | Server: $server_ok | Progress: ${elapsed}s / $((duration * 60))s"
+          done
+          
+          echo "⏰ Session ended after ${duration} minutes"
+
+      - name: Cleanup
+        if: always()
+        run: |
+          echo "🧹 Cleaning up..."
+          ngrok kill 2>/dev/null || true
+          kill $EMULATOR_PID 2>/dev/null || true
+          kill $SERVER_PID 2>/dev/null || true
+          adb emu kill 2>/dev/null || true
+          echo "✅ Cleanup complete"
