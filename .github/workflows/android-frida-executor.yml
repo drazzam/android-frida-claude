@@ -222,17 +222,25 @@ jobs:
           adb tcpip 5555
           sleep 2
           adb connect localhost:5555
+          
+          # Disconnect the direct emulator connection to avoid "more than one device" errors
+          # We'll use the TCP connection (localhost:5555) for everything
+          adb disconnect emulator-5554 2>/dev/null || true
+          
+          echo "📱 Final ADB devices:"
+          adb devices -l
+          
           echo "✅ ADB TCP enabled on port 5555"
 
       - name: Verify Emulator Status
         run: |
           echo "📱 Device Information:"
-          adb shell getprop ro.product.model
-          adb shell getprop ro.build.version.release
-          adb shell getprop ro.product.cpu.abi
+          adb -s localhost:5555 shell getprop ro.product.model
+          adb -s localhost:5555 shell getprop ro.build.version.release
+          adb -s localhost:5555 shell getprop ro.product.cpu.abi
           echo ""
           echo "📦 Available disk space on device:"
-          adb shell df -h /data
+          adb -s localhost:5555 shell df -h /data
 
       - name: Create working directories
         run: |
@@ -452,11 +460,14 @@ jobs:
 
           # ============== ADB Commands ==============
 
+          # Default ADB device to use (TCP connection)
+          ADB_DEVICE = "localhost:5555"
+
           @app.post("/adb")
           def execute_adb(request: ADBRequest):
               """Execute ADB command on connected emulator"""
               try:
-                  full_command = f"adb {request.command}"
+                  full_command = f"adb -s {ADB_DEVICE} {request.command}"
                   result = subprocess.run(
                       full_command,
                       shell=True,
@@ -495,7 +506,7 @@ jobs:
           @app.get("/adb/packages")
           def adb_list_packages(filter: Optional[str] = None):
               """List installed packages on emulator"""
-              cmd = "adb shell pm list packages"
+              cmd = f"adb -s {ADB_DEVICE} shell pm list packages"
               if filter:
                   cmd += f" | grep -i {filter}"
               result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
@@ -509,8 +520,8 @@ jobs:
               """Connect to Frida on the emulator"""
               global frida_device
               try:
-                  # Forward Frida port
-                  subprocess.run(["adb", "forward", "tcp:27042", "tcp:27042"], check=True)
+                  # Forward Frida port using specific device
+                  subprocess.run(["adb", "-s", ADB_DEVICE, "forward", "tcp:27042", "tcp:27042"], check=True)
                   
                   # Connect to remote device
                   frida_device = frida.get_device_manager().add_remote_device("127.0.0.1:27042")
@@ -743,7 +754,7 @@ jobs:
               """Install APK on emulator"""
               try:
                   result = subprocess.run(
-                      f"adb install -r {apk_path}",
+                      f"adb -s {ADB_DEVICE} install -r {apk_path}",
                       shell=True,
                       capture_output=True,
                       text=True,
@@ -796,7 +807,7 @@ jobs:
               try:
                   # Try to launch main activity
                   result = subprocess.run(
-                      f"adb shell monkey -p {package_name} -c android.intent.category.LAUNCHER 1",
+                      f"adb -s {ADB_DEVICE} shell monkey -p {package_name} -c android.intent.category.LAUNCHER 1",
                       shell=True,
                       capture_output=True,
                       text=True
@@ -981,7 +992,7 @@ jobs:
             emulator_ok="❌"
             server_ok="❌"
             
-            if adb shell getprop sys.boot_completed 2>/dev/null | grep -q "1"; then
+            if adb -s localhost:5555 shell getprop sys.boot_completed 2>/dev/null | grep -q "1"; then
               emulator_ok="✅"
             fi
             
@@ -1001,5 +1012,6 @@ jobs:
           ngrok kill 2>/dev/null || true
           kill $EMULATOR_PID 2>/dev/null || true
           kill $SERVER_PID 2>/dev/null || true
-          adb emu kill 2>/dev/null || true
+          adb -s localhost:5555 emu kill 2>/dev/null || true
+          adb kill-server 2>/dev/null || true
           echo "✅ Cleanup complete"
