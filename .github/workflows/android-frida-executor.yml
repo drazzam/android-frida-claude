@@ -104,16 +104,29 @@ jobs:
 
       - name: Install Android SDK Build Tools
         run: |
-          yes | sdkmanager --install "build-tools;34.0.0" 2>/dev/null || true
-          yes | sdkmanager --install "build-tools;33.0.2" 2>/dev/null || true
-          yes | sdkmanager --install "build-tools;30.0.3" 2>/dev/null || true
-          
+          # Add Android SDK tools to PATH
+          echo "$ANDROID_HOME/cmdline-tools/latest/bin" >> $GITHUB_PATH
+          echo "$ANDROID_HOME/platform-tools" >> $GITHUB_PATH
+          echo "$ANDROID_HOME/emulator" >> $GITHUB_PATH
           echo "$ANDROID_HOME/build-tools/34.0.0" >> $GITHUB_PATH
           echo "$ANDROID_HOME/build-tools/33.0.2" >> $GITHUB_PATH
           echo "$ANDROID_HOME/build-tools/30.0.3" >> $GITHUB_PATH
           
-          echo "✅ Android SDK Build Tools installed:"
-          ls -la $ANDROID_HOME/build-tools/ || echo "Build tools directory listing failed"
+          # Export for current step
+          export PATH="$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/platform-tools:$ANDROID_HOME/emulator:$PATH"
+          
+          # Use full path to sdkmanager
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          
+          # Install build tools
+          yes | $SDKMANAGER --install "build-tools;34.0.0" 2>/dev/null || true
+          yes | $SDKMANAGER --install "build-tools;33.0.2" 2>/dev/null || true
+          yes | $SDKMANAGER --install "build-tools;30.0.3" 2>/dev/null || true
+          
+          # Verify tools are accessible
+          echo "✅ Android SDK Build Tools installed"
+          echo "Verifying SDK tools..."
+          ls -la $ANDROID_HOME/cmdline-tools/latest/bin/ | head -10 || true
 
       - name: Install Python Security Tools
         run: |
@@ -523,22 +536,39 @@ jobs:
 
       - name: Install Android System Image
         run: |
-          yes | sdkmanager --install "system-images;android-${{ inputs.android_api }};google_apis;x86_64" 2>/dev/null || true
-          yes | sdkmanager --install "platforms;android-${{ inputs.android_api }}" 2>/dev/null || true
-          yes | sdkmanager --install "platform-tools" 2>/dev/null || true
+          # Use full path to sdkmanager
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          if ! command -v sdkmanager &> /dev/null; then
+            echo "Using full path: $SDKMANAGER"
+          else
+            SDKMANAGER="sdkmanager"
+          fi
+          
+          yes | $SDKMANAGER --install "system-images;android-${{ inputs.android_api }};google_apis;x86_64" 2>/dev/null || true
+          yes | $SDKMANAGER --install "platforms;android-${{ inputs.android_api }}" 2>/dev/null || true
+          yes | $SDKMANAGER --install "platform-tools" 2>/dev/null || true
           echo "✅ Android system image installed"
 
       - name: Create Android Virtual Device
         run: |
           mkdir -p $HOME/.android/avd
-          echo "no" | avdmanager create avd \
+          
+          # Use full path to avdmanager if not in PATH
+          AVDMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/avdmanager"
+          if ! command -v avdmanager &> /dev/null; then
+            echo "avdmanager not in PATH, using full path: $AVDMANAGER"
+          else
+            AVDMANAGER="avdmanager"
+          fi
+          
+          echo "no" | $AVDMANAGER create avd \
             --force \
             --name "security_avd" \
             --package "system-images;android-${{ inputs.android_api }};google_apis;x86_64" \
             --device "pixel_4"
           
           echo "✅ AVD created"
-          avdmanager list avd
+          $AVDMANAGER list avd
 
       - name: Setup ngrok
         run: |
