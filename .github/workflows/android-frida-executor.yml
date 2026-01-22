@@ -104,11 +104,21 @@ jobs:
 
       - name: Create Android Virtual Device (AVD)
         run: |
+          # Ensure AVD directory exists
+          mkdir -p $HOME/.android/avd
+          
+          # Create AVD
           echo "no" | avdmanager create avd \
             --force \
             --name "frida_avd" \
             --package "system-images;android-${{ inputs.android_api }};google_apis;x86_64" \
             --device "pixel_4"
+          
+          # Verify AVD was created
+          echo "✅ Checking AVD creation..."
+          avdmanager list avd
+          ls -la $HOME/.android/avd/
+          
           echo "✅ AVD 'frida_avd' created"
 
       - name: Setup ngrok
@@ -125,6 +135,14 @@ jobs:
         run: |
           echo "🚀 Starting emulator with KVM acceleration..."
           
+          # Set AVD home explicitly
+          export ANDROID_AVD_HOME=$HOME/.android/avd
+          
+          # List available AVDs for debugging
+          echo "📋 Available AVDs:"
+          $ANDROID_HOME/emulator/emulator -list-avds
+          
+          # Start emulator with explicit AVD path
           $ANDROID_HOME/emulator/emulator -avd frida_avd \
             -no-window \
             -no-audio \
