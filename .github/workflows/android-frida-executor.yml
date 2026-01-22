@@ -38,9 +38,7 @@ env:
   ANDROID_AVD_HOME: /home/runner/.android/avd
   ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
   ANDROID_HOME: /usr/local/lib/android/sdk
-  ANDROID_NDK_HOME: /usr/local/lib/android/sdk/ndk/25.2.9519653
   JAVA_HOME: /usr/lib/jvm/temurin-17-jdk-amd64
-  GRADLE_HOME: /usr/share/gradle
   ADB_DEVICE: localhost:5555
 
 jobs:
@@ -100,28 +98,22 @@ jobs:
             graphviz \
             libc6-i386 \
             lib32stdc++6 \
-            lib32z1
+            lib32z1 \
+            xz-utils
           echo "✅ Core system dependencies installed"
 
       - name: Install Android SDK Build Tools
         run: |
-          # Install multiple build-tools versions for compatibility
           yes | sdkmanager --install "build-tools;34.0.0" 2>/dev/null || true
           yes | sdkmanager --install "build-tools;33.0.2" 2>/dev/null || true
           yes | sdkmanager --install "build-tools;30.0.3" 2>/dev/null || true
           
-          # Add to PATH - prefer newer versions
           echo "$ANDROID_HOME/build-tools/34.0.0" >> $GITHUB_PATH
           echo "$ANDROID_HOME/build-tools/33.0.2" >> $GITHUB_PATH
           echo "$ANDROID_HOME/build-tools/30.0.3" >> $GITHUB_PATH
           
-          # Verify tools
           echo "✅ Android SDK Build Tools installed:"
-          ls -la $ANDROID_HOME/build-tools/
-          
-          # Test aapt2
-          $ANDROID_HOME/build-tools/34.0.0/aapt2 version || echo "aapt2 34 not available"
-          $ANDROID_HOME/build-tools/33.0.2/aapt2 version || echo "aapt2 33 not available"
+          ls -la $ANDROID_HOME/build-tools/ || echo "Build tools directory listing failed"
 
       - name: Install Python Security Tools
         run: |
@@ -151,146 +143,149 @@ jobs:
             yara-python
           echo "✅ Python security tools installed"
           
-          # Verify installations
           echo "Tool versions:"
-          frida --version
-          objection version || echo "objection version check skipped"
-          apkid --version || echo "apkid installed"
+          frida --version || echo "frida version check failed"
+          objection version 2>/dev/null || echo "objection installed"
 
       - name: Install APKTool
         run: |
-          # Install latest apktool
           APKTOOL_VERSION="2.9.3"
           sudo wget -q "https://github.com/iBotPeaches/Apktool/releases/download/v${APKTOOL_VERSION}/apktool_${APKTOOL_VERSION}.jar" \
-            -O /usr/local/bin/apktool.jar
+            -O /usr/local/bin/apktool.jar || { echo "APKTool jar download failed"; exit 1; }
           sudo wget -q "https://raw.githubusercontent.com/iBotPeaches/Apktool/master/scripts/linux/apktool" \
-            -O /usr/local/bin/apktool
+            -O /usr/local/bin/apktool || { echo "APKTool script download failed"; exit 1; }
           sudo chmod +x /usr/local/bin/apktool
           
-          # Verify
-          apktool --version
-          echo "✅ APKTool $APKTOOL_VERSION installed"
+          apktool --version && echo "✅ APKTool $APKTOOL_VERSION installed"
 
       - name: Install JADX Decompiler
         run: |
           JADX_VERSION="1.5.0"
           wget -q "https://github.com/skylot/jadx/releases/download/v${JADX_VERSION}/jadx-${JADX_VERSION}.zip" \
-            -O /tmp/jadx.zip
+            -O /tmp/jadx.zip || { echo "JADX download failed"; exit 1; }
           sudo unzip -q /tmp/jadx.zip -d /opt/jadx
           sudo ln -sf /opt/jadx/bin/jadx /usr/local/bin/jadx
           sudo ln -sf /opt/jadx/bin/jadx-gui /usr/local/bin/jadx-gui
           rm /tmp/jadx.zip
           
-          # Verify
-          jadx --version
-          echo "✅ JADX $JADX_VERSION installed"
+          jadx --version && echo "✅ JADX $JADX_VERSION installed"
 
       - name: Install Dex2Jar
+        continue-on-error: true
         run: |
           DEX2JAR_VERSION="2.4"
           wget -q "https://github.com/pxb1988/dex2jar/releases/download/v${DEX2JAR_VERSION}/dex-tools-v${DEX2JAR_VERSION}.zip" \
             -O /tmp/dex2jar.zip
-          sudo unzip -q /tmp/dex2jar.zip -d /opt/
-          sudo mv /opt/dex-tools-v${DEX2JAR_VERSION} /opt/dex2jar
-          sudo chmod +x /opt/dex2jar/*.sh
-          sudo ln -sf /opt/dex2jar/d2j-dex2jar.sh /usr/local/bin/d2j-dex2jar
-          sudo ln -sf /opt/dex2jar/d2j-jar2dex.sh /usr/local/bin/d2j-jar2dex
-          rm /tmp/dex2jar.zip
-          echo "✅ Dex2Jar $DEX2JAR_VERSION installed"
+          if [ -f /tmp/dex2jar.zip ] && [ -s /tmp/dex2jar.zip ]; then
+            sudo unzip -q /tmp/dex2jar.zip -d /opt/
+            sudo mv /opt/dex-tools-v${DEX2JAR_VERSION} /opt/dex2jar 2>/dev/null || sudo mv /opt/dex-tools-* /opt/dex2jar 2>/dev/null || true
+            sudo chmod +x /opt/dex2jar/*.sh 2>/dev/null || true
+            sudo ln -sf /opt/dex2jar/d2j-dex2jar.sh /usr/local/bin/d2j-dex2jar 2>/dev/null || true
+            rm /tmp/dex2jar.zip
+            echo "✅ Dex2Jar installed"
+          else
+            echo "⚠️ Dex2Jar download failed, skipping"
+          fi
 
       - name: Install Smali/Baksmali
+        continue-on-error: true
         run: |
-          SMALI_VERSION="2.5.2"
-          sudo wget -q "https://github.com/JesusFreke/smali/releases/download/v${SMALI_VERSION}/smali-${SMALI_VERSION}.jar" \
-            -O /usr/local/bin/smali.jar
-          sudo wget -q "https://github.com/JesusFreke/smali/releases/download/v${SMALI_VERSION}/baksmali-${SMALI_VERSION}.jar" \
-            -O /usr/local/bin/baksmali.jar
+          # Using version 3.0.5 (latest verified version on GitHub)
+          SMALI_VERSION="3.0.5"
           
-          # Create wrapper scripts
-          echo '#!/bin/bash' | sudo tee /usr/local/bin/smali
-          echo 'java -jar /usr/local/bin/smali.jar "$@"' | sudo tee -a /usr/local/bin/smali
-          sudo chmod +x /usr/local/bin/smali
+          echo "Downloading smali ${SMALI_VERSION}..."
+          sudo wget -q "https://github.com/google/smali/releases/download/v${SMALI_VERSION}/smali-${SMALI_VERSION}.jar" \
+            -O /usr/local/bin/smali.jar || \
+          sudo wget -q "https://bitbucket.org/JesusFreke/smali/downloads/smali-2.5.2.jar" \
+            -O /usr/local/bin/smali.jar || \
+          { echo "⚠️ smali download failed"; }
           
-          echo '#!/bin/bash' | sudo tee /usr/local/bin/baksmali
-          echo 'java -jar /usr/local/bin/baksmali.jar "$@"' | sudo tee -a /usr/local/bin/baksmali
-          sudo chmod +x /usr/local/bin/baksmali
+          echo "Downloading baksmali ${SMALI_VERSION}..."
+          sudo wget -q "https://github.com/google/smali/releases/download/v${SMALI_VERSION}/baksmali-${SMALI_VERSION}.jar" \
+            -O /usr/local/bin/baksmali.jar || \
+          sudo wget -q "https://bitbucket.org/JesusFreke/smali/downloads/baksmali-2.5.2.jar" \
+            -O /usr/local/bin/baksmali.jar || \
+          { echo "⚠️ baksmali download failed"; }
           
-          echo "✅ Smali/Baksmali $SMALI_VERSION installed"
+          # Create wrapper scripts only if jars exist
+          if [ -f /usr/local/bin/smali.jar ]; then
+            echo '#!/bin/bash' | sudo tee /usr/local/bin/smali > /dev/null
+            echo 'java -jar /usr/local/bin/smali.jar "$@"' | sudo tee -a /usr/local/bin/smali > /dev/null
+            sudo chmod +x /usr/local/bin/smali
+            echo "✅ Smali installed"
+          fi
+          
+          if [ -f /usr/local/bin/baksmali.jar ]; then
+            echo '#!/bin/bash' | sudo tee /usr/local/bin/baksmali > /dev/null
+            echo 'java -jar /usr/local/bin/baksmali.jar "$@"' | sudo tee -a /usr/local/bin/baksmali > /dev/null
+            sudo chmod +x /usr/local/bin/baksmali
+            echo "✅ Baksmali installed"
+          fi
 
       - name: Install Radare2
+        continue-on-error: true
         run: |
-          # Install radare2 from package (faster)
-          sudo apt-get install -y -qq radare2
-          
-          # Verify
-          r2 -v
-          echo "✅ Radare2 installed"
+          sudo apt-get install -y -qq radare2 || { echo "⚠️ radare2 apt install failed"; }
+          r2 -v 2>/dev/null && echo "✅ Radare2 installed" || echo "⚠️ Radare2 not available"
 
       - name: Install CFR Java Decompiler
+        continue-on-error: true
         run: |
           CFR_VERSION="0.152"
           sudo wget -q "https://github.com/leibnitz27/cfr/releases/download/${CFR_VERSION}/cfr-${CFR_VERSION}.jar" \
-            -O /usr/local/bin/cfr.jar
+            -O /usr/local/bin/cfr.jar || { echo "⚠️ CFR download failed"; exit 0; }
           
-          echo '#!/bin/bash' | sudo tee /usr/local/bin/cfr
-          echo 'java -jar /usr/local/bin/cfr.jar "$@"' | sudo tee -a /usr/local/bin/cfr
-          sudo chmod +x /usr/local/bin/cfr
-          echo "✅ CFR $CFR_VERSION installed"
+          if [ -f /usr/local/bin/cfr.jar ] && [ -s /usr/local/bin/cfr.jar ]; then
+            echo '#!/bin/bash' | sudo tee /usr/local/bin/cfr > /dev/null
+            echo 'java -jar /usr/local/bin/cfr.jar "$@"' | sudo tee -a /usr/local/bin/cfr > /dev/null
+            sudo chmod +x /usr/local/bin/cfr
+            echo "✅ CFR $CFR_VERSION installed"
+          fi
 
       - name: Install Procyon Decompiler
+        continue-on-error: true
         run: |
           PROCYON_VERSION="0.6.0"
           sudo wget -q "https://github.com/mstrobel/procyon/releases/download/v${PROCYON_VERSION}/procyon-decompiler-${PROCYON_VERSION}.jar" \
-            -O /usr/local/bin/procyon.jar
+            -O /usr/local/bin/procyon.jar || { echo "⚠️ Procyon download failed"; exit 0; }
           
-          echo '#!/bin/bash' | sudo tee /usr/local/bin/procyon
-          echo 'java -jar /usr/local/bin/procyon.jar "$@"' | sudo tee -a /usr/local/bin/procyon
-          sudo chmod +x /usr/local/bin/procyon
-          echo "✅ Procyon $PROCYON_VERSION installed"
+          if [ -f /usr/local/bin/procyon.jar ] && [ -s /usr/local/bin/procyon.jar ]; then
+            echo '#!/bin/bash' | sudo tee /usr/local/bin/procyon > /dev/null
+            echo 'java -jar /usr/local/bin/procyon.jar "$@"' | sudo tee -a /usr/local/bin/procyon > /dev/null
+            sudo chmod +x /usr/local/bin/procyon
+            echo "✅ Procyon $PROCYON_VERSION installed"
+          fi
 
-      - name: Install Enjarify (Google's dex2jar alternative)
+      - name: Install Enjarify
+        continue-on-error: true
         run: |
-          git clone --depth 1 https://github.com/Storyyeller/enjarify.git /tmp/enjarify
-          sudo mv /tmp/enjarify /opt/enjarify
-          sudo ln -sf /opt/enjarify/enjarify.sh /usr/local/bin/enjarify
-          echo "✅ Enjarify installed"
+          git clone --depth 1 https://github.com/Storyyeller/enjarify.git /tmp/enjarify 2>/dev/null || { echo "⚠️ Enjarify clone failed"; exit 0; }
+          if [ -d "/tmp/enjarify" ]; then
+            sudo mv /tmp/enjarify /opt/enjarify
+            sudo ln -sf /opt/enjarify/enjarify.sh /usr/local/bin/enjarify
+            echo "✅ Enjarify installed"
+          fi
 
-      - name: Install Advanced Tools (DexGuard/Obfuscation)
+      - name: Install Advanced Tools
         if: ${{ inputs.enable_advanced_tools == 'true' }}
+        continue-on-error: true
         run: |
           echo "📦 Installing advanced deobfuscation tools..."
-          
-          # Simplify - Android deobfuscator
-          git clone --depth 1 https://github.com/CalebFenton/simplify.git /tmp/simplify || true
-          if [ -d "/tmp/simplify" ]; then
-            cd /tmp/simplify
-            ./gradlew fatjar 2>/dev/null || echo "Simplify build skipped"
-            if [ -f "simplify/build/libs/simplify.jar" ]; then
-              sudo cp simplify/build/libs/simplify.jar /usr/local/bin/
-              echo '#!/bin/bash' | sudo tee /usr/local/bin/simplify
-              echo 'java -jar /usr/local/bin/simplify.jar "$@"' | sudo tee -a /usr/local/bin/simplify
-              sudo chmod +x /usr/local/bin/simplify
-              echo "✅ Simplify installed"
-            fi
-          fi
           
           # JD-CLI - Java Decompiler CLI
           JD_VERSION="1.2.1"
           wget -q "https://github.com/intoolswetrust/jd-cli/releases/download/jd-cli-${JD_VERSION}/jd-cli-${JD_VERSION}-dist.zip" \
-            -O /tmp/jd-cli.zip || true
-          if [ -f "/tmp/jd-cli.zip" ]; then
-            sudo unzip -q /tmp/jd-cli.zip -d /opt/jd-cli
-            sudo chmod +x /opt/jd-cli/jd-cli
-            sudo ln -sf /opt/jd-cli/jd-cli /usr/local/bin/jd-cli
-            echo "✅ JD-CLI installed"
-          fi
-          
-          # ByteCodeViewer
-          BCV_VERSION="2.12"
-          wget -q "https://github.com/Konloch/bytecode-viewer/releases/download/v${BCV_VERSION}/Bytecode-Viewer-${BCV_VERSION}.jar" \
-            -O /usr/local/bin/bytecode-viewer.jar 2>/dev/null || true
-          if [ -f "/usr/local/bin/bytecode-viewer.jar" ]; then
-            echo "✅ ByteCode Viewer installed"
+            -O /tmp/jd-cli.zip 2>/dev/null || true
+          if [ -f "/tmp/jd-cli.zip" ] && [ -s "/tmp/jd-cli.zip" ]; then
+            sudo unzip -q /tmp/jd-cli.zip -d /opt/jd-cli 2>/dev/null || true
+            if [ -f "/opt/jd-cli/jd-cli" ]; then
+              sudo chmod +x /opt/jd-cli/jd-cli
+              sudo ln -sf /opt/jd-cli/jd-cli /usr/local/bin/jd-cli
+              echo "✅ JD-CLI installed"
+            fi
+            rm -f /tmp/jd-cli.zip
+          else
+            echo "⚠️ JD-CLI download failed"
           fi
           
           echo "✅ Advanced tools installation complete"
@@ -300,12 +295,7 @@ jobs:
           mkdir -p /tmp/frida-scripts
           
           # Universal SSL Pinning Bypass
-          cat > /tmp/frida-scripts/ssl_bypass_universal.js << 'SSLEOF'
-          /*
-           * Universal SSL Pinning Bypass
-           * Supports: OkHttp, Retrofit, HttpURLConnection, WebView,
-           * TrustManager, TrustKit, Appcelerator, Flutter, Xamarin
-           */
+          cat > /tmp/frida-scripts/ssl_bypass_universal.js << 'SSLSCRIPT'
           Java.perform(function() {
               console.log("[*] Universal SSL Bypass Loading...");
               
@@ -334,9 +324,6 @@ jobs:
                   CertPinner.check.overload('java.lang.String', 'java.util.List').implementation = function(h, p) {
                       console.log("[+] OkHttp3 pin bypassed: " + h);
                   };
-                  CertPinner.check.overload('java.lang.String', '[Ljava.security.cert.Certificate;').implementation = function(h, p) {
-                      console.log("[+] OkHttp3 pin bypassed: " + h);
-                  };
               } catch(e) {}
               
               // OkHttp3 Builder
@@ -348,27 +335,6 @@ jobs:
                   };
               } catch(e) {}
               
-              // TrustKit
-              try {
-                  var TrustKit = Java.use('com.datatheorem.android.trustkit.pinning.OkHostnameVerifier');
-                  TrustKit.verify.overload('java.lang.String', 'javax.net.ssl.SSLSession').implementation = function(h, s) {
-                      console.log("[+] TrustKit bypassed: " + h);
-                      return true;
-                  };
-              } catch(e) {}
-              
-              // HostnameVerifier
-              try {
-                  var HV = Java.use('javax.net.ssl.HostnameVerifier');
-                  var HVImpl = Java.registerClass({
-                      name: 'com.bypass.HostnameVerifier',
-                      implements: [HV],
-                      methods: {
-                          verify: function(h, s) { return true; }
-                      }
-                  });
-              } catch(e) {}
-              
               // WebView SSL
               try {
                   var WebViewClient = Java.use('android.webkit.WebViewClient');
@@ -378,27 +344,15 @@ jobs:
                   };
               } catch(e) {}
               
-              // Network Security Config
-              try {
-                  var NSC = Java.use('android.security.net.config.NetworkSecurityConfig');
-                  NSC.isCleartextTrafficPermitted.overload().implementation = function() { return true; };
-                  NSC.isCleartextTrafficPermitted.overload('java.lang.String').implementation = function(h) { return true; };
-              } catch(e) {}
-              
               console.log("[*] Universal SSL Bypass Active!");
           });
-          SSLEOF
+          SSLSCRIPT
           
           # Root Detection Bypass
-          cat > /tmp/frida-scripts/root_bypass_universal.js << 'ROOTEOF'
-          /*
-           * Universal Root Detection Bypass
-           * Supports: RootBeer, SafetyNet, common detection methods
-           */
+          cat > /tmp/frida-scripts/root_bypass_universal.js << 'ROOTSCRIPT'
           Java.perform(function() {
               console.log("[*] Root Detection Bypass Loading...");
               
-              // Common file checks
               var RootFiles = [
                   "/system/app/Superuser.apk", "/system/xbin/su", "/system/bin/su",
                   "/sbin/su", "/data/local/xbin/su", "/data/local/bin/su",
@@ -406,7 +360,6 @@ jobs:
                   "/data/local/su", "/su/bin/su", "/su/bin", "/magisk"
               ];
               
-              // File.exists bypass
               try {
                   var File = Java.use('java.io.File');
                   File.exists.implementation = function() {
@@ -429,82 +382,33 @@ jobs:
                       console.log("[+] RootBeer.isRooted bypassed");
                       return false;
                   };
-                  RootBeer.isRootedWithoutBusyBoxCheck.implementation = function() { return false; };
-                  RootBeer.detectRootManagementApps.implementation = function() { return false; };
-                  RootBeer.detectPotentiallyDangerousApps.implementation = function() { return false; };
-                  RootBeer.detectTestKeys.implementation = function() { return false; };
-                  RootBeer.checkForBusyBoxBinary.implementation = function() { return false; };
-                  RootBeer.checkForSuBinary.implementation = function() { return false; };
-                  RootBeer.checkSuExists.implementation = function() { return false; };
-                  RootBeer.checkForRWPaths.implementation = function() { return false; };
-                  RootBeer.checkForDangerousProps.implementation = function() { return false; };
-                  RootBeer.checkForRootNative.implementation = function() { return false; };
-                  RootBeer.detectRootCloakingApps.implementation = function() { return false; };
-                  RootBeer.isSelinuxFlagInEnabled.implementation = function() { return true; };
               } catch(e) {}
               
-              // Runtime.exec bypass for su checks
-              try {
-                  var Runtime = Java.use('java.lang.Runtime');
-                  var execOrig = Runtime.exec.overload('java.lang.String');
-                  execOrig.implementation = function(cmd) {
-                      if (cmd.indexOf("su") !== -1 || cmd.indexOf("which") !== -1) {
-                          console.log("[+] Runtime.exec blocked: " + cmd);
-                          throw new Error("Command not found");
-                      }
-                      return execOrig.call(this, cmd);
-                  };
-              } catch(e) {}
-              
-              // System.getProperty
+              // Block System.exit
               try {
                   var System = Java.use('java.lang.System');
-                  System.getProperty.overload('java.lang.String').implementation = function(key) {
-                      if (key === "ro.build.tags") {
-                          return "release-keys";
-                      }
-                      return this.getProperty(key);
-                  };
-              } catch(e) {}
-              
-              // Block System.exit for anti-tamper
-              try {
-                  var SystemExit = Java.use('java.lang.System');
-                  SystemExit.exit.implementation = function(code) {
+                  System.exit.implementation = function(code) {
                       console.log("[+] System.exit(" + code + ") blocked!");
                   };
               } catch(e) {}
               
               console.log("[*] Root Detection Bypass Active!");
           });
-          ROOTEOF
+          ROOTSCRIPT
           
           # Anti-Debug Bypass
-          cat > /tmp/frida-scripts/anti_debug_bypass.js << 'DEBUGEOF'
-          /*
-           * Anti-Debugging Bypass
-           * Bypasses: ptrace, Debug.isDebuggerConnected, timing checks
-           */
+          cat > /tmp/frida-scripts/anti_debug_bypass.js << 'DEBUGSCRIPT'
           Java.perform(function() {
               console.log("[*] Anti-Debug Bypass Loading...");
               
-              // Debug.isDebuggerConnected
               try {
                   var Debug = Java.use('android.os.Debug');
                   Debug.isDebuggerConnected.implementation = function() {
                       console.log("[+] Debug.isDebuggerConnected bypassed");
                       return false;
                   };
-                  Debug.waitingForDebugger.implementation = function() { return false; };
               } catch(e) {}
               
-              // ApplicationInfo flags
-              try {
-                  var ApplicationInfo = Java.use('android.content.pm.ApplicationInfo');
-                  ApplicationInfo.flags.value = 0;
-              } catch(e) {}
-              
-              // TracerPid check
               try {
                   var BufferedReader = Java.use('java.io.BufferedReader');
                   BufferedReader.readLine.implementation = function() {
@@ -518,18 +422,73 @@ jobs:
               
               console.log("[*] Anti-Debug Bypass Active!");
           });
-          DEBUGEOF
+          DEBUGSCRIPT
           
-          # DexGuard String Decryption Helper
-          cat > /tmp/frida-scripts/dexguard_strings.js << 'DEXEOF'
-          /*
-           * DexGuard String Decryption Logger
-           * Logs decrypted strings at runtime
-           */
+          # Network Monitor
+          cat > /tmp/frida-scripts/network_monitor.js << 'NETSCRIPT'
+          Java.perform(function() {
+              console.log("[*] Network Monitor Loading...");
+              
+              try {
+                  var URL = Java.use('java.net.URL');
+                  URL.openConnection.overload().implementation = function() {
+                      console.log("[URL] " + this.toString());
+                      return this.openConnection();
+                  };
+              } catch(e) {}
+              
+              try {
+                  var Request = Java.use('okhttp3.Request');
+                  Request.url.implementation = function() {
+                      var url = this.url();
+                      console.log("[OkHttp] " + url.toString());
+                      return url;
+                  };
+              } catch(e) {}
+              
+              console.log("[*] Network Monitor Active!");
+          });
+          NETSCRIPT
+          
+          # Crypto Monitor
+          cat > /tmp/frida-scripts/crypto_monitor.js << 'CRYPTOSCRIPT'
+          Java.perform(function() {
+              console.log("[*] Crypto Monitor Loading...");
+              
+              function toHex(bytes) {
+                  if (!bytes) return "null";
+                  var hex = [];
+                  for (var i = 0; i < Math.min(bytes.length, 32); i++) {
+                      hex.push(("0" + (bytes[i] & 0xFF).toString(16)).slice(-2));
+                  }
+                  return hex.join("") + (bytes.length > 32 ? "..." : "");
+              }
+              
+              try {
+                  var Cipher = Java.use('javax.crypto.Cipher');
+                  Cipher.getInstance.overload('java.lang.String').implementation = function(t) {
+                      console.log("[Cipher] " + t);
+                      return this.getInstance(t);
+                  };
+              } catch(e) {}
+              
+              try {
+                  var SecretKeySpec = Java.use('javax.crypto.spec.SecretKeySpec');
+                  SecretKeySpec.$init.overload('[B', 'java.lang.String').implementation = function(key, alg) {
+                      console.log("[KEY] " + alg + ": " + toHex(key));
+                      return this.$init(key, alg);
+                  };
+              } catch(e) {}
+              
+              console.log("[*] Crypto Monitor Active!");
+          });
+          CRYPTOSCRIPT
+          
+          # DexGuard String Logger
+          cat > /tmp/frida-scripts/dexguard_strings.js << 'DEXSCRIPT'
           Java.perform(function() {
               console.log("[*] DexGuard String Logger Loading...");
               
-              // Hook String constructor to catch decrypted strings
               try {
                   var StringClass = Java.use('java.lang.String');
                   StringClass.$init.overload('[B').implementation = function(bytes) {
@@ -539,16 +498,8 @@ jobs:
                       }
                       return result;
                   };
-                  StringClass.$init.overload('[B', 'java.lang.String').implementation = function(bytes, charset) {
-                      var result = StringClass.$new(bytes, charset);
-                      if (bytes.length > 3 && bytes.length < 500) {
-                          console.log("[STRING] " + result);
-                      }
-                      return result;
-                  };
               } catch(e) {}
               
-              // Hook StringBuilder for concatenated strings
               try {
                   var StringBuilder = Java.use('java.lang.StringBuilder');
                   StringBuilder.toString.implementation = function() {
@@ -565,102 +516,7 @@ jobs:
               
               console.log("[*] DexGuard String Logger Active!");
           });
-          DEXEOF
-          
-          # Network Traffic Monitor
-          cat > /tmp/frida-scripts/network_monitor.js << 'NETEOF'
-          /*
-           * Comprehensive Network Traffic Monitor
-           */
-          Java.perform(function() {
-              console.log("[*] Network Monitor Loading...");
-              
-              // URL connections
-              try {
-                  var URL = Java.use('java.net.URL');
-                  URL.openConnection.overload().implementation = function() {
-                      console.log("[URL] " + this.toString());
-                      return this.openConnection();
-                  };
-              } catch(e) {}
-              
-              // OkHttp
-              try {
-                  var Request = Java.use('okhttp3.Request');
-                  Request.url.implementation = function() {
-                      var url = this.url();
-                      console.log("[OkHttp] " + url.toString());
-                      return url;
-                  };
-              } catch(e) {}
-              
-              // Retrofit
-              try {
-                  var ServiceMethod = Java.use('retrofit2.ServiceMethod');
-                  ServiceMethod.invoke.implementation = function(args) {
-                      console.log("[Retrofit] Service method invoked");
-                      return this.invoke(args);
-                  };
-              } catch(e) {}
-              
-              console.log("[*] Network Monitor Active!");
-          });
-          NETEOF
-          
-          # Crypto Monitor
-          cat > /tmp/frida-scripts/crypto_monitor.js << 'CRYPTOEOF'
-          /*
-           * Cryptographic Operations Monitor
-           */
-          Java.perform(function() {
-              console.log("[*] Crypto Monitor Loading...");
-              
-              function toHex(bytes) {
-                  if (!bytes) return "null";
-                  var hex = [];
-                  for (var i = 0; i < Math.min(bytes.length, 32); i++) {
-                      hex.push(("0" + (bytes[i] & 0xFF).toString(16)).slice(-2));
-                  }
-                  return hex.join("") + (bytes.length > 32 ? "..." : "");
-              }
-              
-              // Cipher
-              try {
-                  var Cipher = Java.use('javax.crypto.Cipher');
-                  Cipher.getInstance.overload('java.lang.String').implementation = function(t) {
-                      console.log("[Cipher] " + t);
-                      return this.getInstance(t);
-                  };
-                  Cipher.doFinal.overload('[B').implementation = function(input) {
-                      console.log("[Cipher.doFinal] IN: " + toHex(input));
-                      var result = this.doFinal(input);
-                      console.log("[Cipher.doFinal] OUT: " + toHex(result));
-                      return result;
-                  };
-              } catch(e) {}
-              
-              // SecretKeySpec
-              try {
-                  var SecretKeySpec = Java.use('javax.crypto.spec.SecretKeySpec');
-                  SecretKeySpec.$init.overload('[B', 'java.lang.String').implementation = function(key, alg) {
-                      console.log("[KEY] " + alg + ": " + toHex(key));
-                      return this.$init(key, alg);
-                  };
-              } catch(e) {}
-              
-              // MessageDigest
-              try {
-                  var MD = Java.use('java.security.MessageDigest');
-                  MD.digest.overload('[B').implementation = function(input) {
-                      var result = this.digest(input);
-                      console.log("[Hash] " + this.getAlgorithm() + " -> " + toHex(result));
-                      return result;
-                  };
-              } catch(e) {}
-              
-              console.log("[*] Crypto Monitor Active!");
-          });
-          CRYPTOEOF
+          DEXSCRIPT
           
           echo "✅ Frida scripts library created"
           ls -la /tmp/frida-scripts/
@@ -729,7 +585,6 @@ jobs:
           echo "✅ Emulator booted in ${elapsed}s"
           adb devices -l
           
-          # Setup ADB TCP
           adb tcpip 5555
           sleep 2
           adb connect localhost:5555
@@ -750,7 +605,6 @@ jobs:
           echo "  JADX: $(jadx --version 2>/dev/null || echo 'N/A')"
           echo "  Frida: $(frida --version 2>/dev/null || echo 'N/A')"
           echo "  Objection: $(objection version 2>/dev/null || echo 'N/A')"
-          echo "  APKiD: $(apkid --version 2>/dev/null || echo 'N/A')"
           echo "  R2: $(r2 -v 2>/dev/null | head -1 || echo 'N/A')"
 
       - name: Create Working Directories
@@ -768,7 +622,7 @@ jobs:
           cat > /tmp/android_security_executor.py << 'SERVEREOF'
           #!/usr/bin/env python3
           """
-          Android Security Testing Remote Executor
+          Android Security Testing Remote Executor v3.0
           Complete toolkit for APK analysis including DexGuard support
           """
           
@@ -780,7 +634,6 @@ jobs:
           import subprocess
           import traceback
           import shutil
-          import base64
           import hashlib
           from io import StringIO
           from typing import Optional, Dict, Any, List
@@ -807,7 +660,6 @@ jobs:
               allow_headers=["*"],
           )
           
-          # Configuration
           ADB_DEVICE = "localhost:5555"
           WORK_DIR = Path("/tmp")
           APK_DIR = WORK_DIR / "apks"
@@ -816,7 +668,6 @@ jobs:
           SCRIPTS_DIR = WORK_DIR / "frida-scripts"
           OUTPUT_DIR = WORK_DIR / "output"
           
-          # Global state
           execution_namespace = {"__builtins__": __builtins__}
           frida_device = None
           frida_session = None
@@ -842,14 +693,11 @@ jobs:
           class APKPatchRequest(BaseModel):
               apk_path: str
               architecture: str = "x86_64"
-              gadget_config: Optional[str] = None
           
           class DecompileRequest(BaseModel):
               apk_path: str
               tool: str = "jadx"
               output_dir: Optional[str] = None
-          
-          # ============== Core Endpoints ==============
           
           @app.get("/")
           def root():
@@ -857,13 +705,6 @@ jobs:
                   "service": "Android Security Testing Executor",
                   "version": "3.0.0",
                   "status": "online",
-                  "tools": {
-                      "decompilers": ["jadx", "cfr", "procyon", "apktool"],
-                      "converters": ["dex2jar", "enjarify", "smali", "baksmali"],
-                      "analysis": ["apkid", "androguard", "radare2", "quark"],
-                      "instrumentation": ["frida", "objection"],
-                      "utilities": ["apksigner", "zipalign", "aapt2"]
-                  },
                   "endpoints": {
                       "system": ["/health", "/disk", "/tools"],
                       "execution": ["/execute", "/bash", "/adb"],
@@ -892,33 +733,26 @@ jobs:
           
           @app.get("/tools")
           def list_tools():
-              """List all installed tools and versions"""
               tools = {}
               checks = [
-                  ("apktool", ["apktool", "--version"]),
-                  ("jadx", ["jadx", "--version"]),
-                  ("frida", ["frida", "--version"]),
-                  ("objection", ["objection", "version"]),
-                  ("apkid", ["apkid", "--version"]),
-                  ("r2", ["r2", "-v"]),
-                  ("dex2jar", ["d2j-dex2jar", "--help"]),
-                  ("smali", ["java", "-jar", "/usr/local/bin/smali.jar", "--version"]),
-                  ("cfr", ["java", "-jar", "/usr/local/bin/cfr.jar", "--version"]),
-                  ("aapt2", ["aapt2", "version"]),
-                  ("apksigner", ["apksigner", "--version"]),
+                  ("apktool", "apktool --version"),
+                  ("jadx", "jadx --version"),
+                  ("frida", "frida --version"),
+                  ("objection", "objection version"),
+                  ("r2", "r2 -v"),
+                  ("aapt2", "aapt2 version"),
+                  ("apksigner", "apksigner --version"),
               ]
               
               for name, cmd in checks:
                   try:
-                      result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+                      result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=10)
                       output = (result.stdout + result.stderr).strip().split('\n')[0][:100]
                       tools[name] = {"installed": True, "version": output}
                   except:
                       tools[name] = {"installed": False, "version": None}
               
               return {"success": True, "tools": tools}
-          
-          # ============== Code Execution ==============
           
           @app.post("/execute")
           def execute_code(request: CodeRequest):
@@ -930,15 +764,6 @@ jobs:
               try:
                   with redirect_stdout(stdout_capture), redirect_stderr(stderr_capture):
                       exec(request.code, execution_namespace)
-                      lines = request.code.strip().split('\n')
-                      if lines:
-                          last = lines[-1].strip()
-                          if last and not any(last.startswith(k) for k in 
-                              ['import', 'from', 'def', 'class', 'if', 'for', 'while', 'with', 'try', '#', 'print', '=']):
-                              try:
-                                  result = eval(last, execution_namespace)
-                              except:
-                                  pass
               except Exception as e:
                   error = f"{type(e).__name__}: {str(e)}\n{traceback.format_exc()}"
               
@@ -967,8 +792,6 @@ jobs:
                   return {"success": False, "error": f"Timeout after {request.timeout}s"}
               except Exception as e:
                   return {"success": False, "error": str(e)}
-          
-          # ============== ADB ==============
           
           @app.post("/adb")
           def execute_adb(request: ADBRequest):
@@ -1007,12 +830,9 @@ jobs:
               packages = [p.replace("package:", "") for p in result.stdout.strip().split('\n') if p]
               return {"success": True, "packages": packages, "count": len(packages)}
           
-          # ============== APK Operations ==============
-          
           @app.get("/apk/info")
           def apk_info(apk_path: str):
               try:
-                  # Use aapt2 from build-tools
                   aapt_paths = [
                       "/usr/local/lib/android/sdk/build-tools/34.0.0/aapt2",
                       "/usr/local/lib/android/sdk/build-tools/33.0.2/aapt2",
@@ -1046,7 +866,6 @@ jobs:
                       elif line.startswith("targetSdkVersion:"):
                           info["target_sdk"] = line.split("'")[1] if "'" in line else None
                   
-                  # Get file hash
                   with open(apk_path, 'rb') as f:
                       info["sha256"] = hashlib.sha256(f.read()).hexdigest()
                   info["size_mb"] = round(os.path.getsize(apk_path) / (1024*1024), 2)
@@ -1057,7 +876,6 @@ jobs:
           
           @app.get("/apk/identify")
           def apk_identify(apk_path: str):
-              """Identify protections using APKiD"""
               try:
                   result = subprocess.run(
                       f"apkid -j {apk_path}",
@@ -1077,13 +895,11 @@ jobs:
           
           @app.post("/apk/patch")
           def patch_apk(request: APKPatchRequest):
-              """Patch APK with Frida Gadget"""
               try:
                   apk_path = Path(request.apk_path)
                   if not apk_path.exists():
                       return {"success": False, "error": f"APK not found: {apk_path}"}
                   
-                  # Set PATH to include build-tools
                   env = os.environ.copy()
                   env["PATH"] = f"/usr/local/lib/android/sdk/build-tools/34.0.0:{env.get('PATH', '')}"
                   
@@ -1095,7 +911,6 @@ jobs:
                   patched_path = apk_path.parent / patched_name
                   
                   if patched_path.exists() and patched_path.stat().st_size > 0:
-                      # Verify Frida Gadget is in the APK
                       check = subprocess.run(f"unzip -l {patched_path} | grep -i frida", shell=True, capture_output=True, text=True)
                       has_gadget = "frida" in check.stdout.lower()
                       
@@ -1119,131 +934,6 @@ jobs:
                   return {"success": False, "error": "Patching timed out after 300s"}
               except Exception as e:
                   return {"success": False, "error": str(e)}
-          
-          @app.post("/apk/patch-manual")
-          def patch_apk_manual(request: APKPatchRequest):
-              """Manual APK patching with more control (for difficult APKs)"""
-              try:
-                  apk_path = Path(request.apk_path)
-                  if not apk_path.exists():
-                      return {"success": False, "error": f"APK not found"}
-                  
-                  work_dir = PATCHED_DIR / f"manual_{int(time.time())}"
-                  work_dir.mkdir(parents=True, exist_ok=True)
-                  
-                  steps = []
-                  
-                  # Step 1: Decompile with apktool
-                  decompiled = work_dir / "decompiled"
-                  cmd = f"apktool d -f -o {decompiled} {apk_path}"
-                  result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=120)
-                  steps.append({"step": "decompile", "success": result.returncode == 0, "output": result.stderr[:500]})
-                  
-                  if result.returncode != 0:
-                      return {"success": False, "error": "Decompilation failed", "steps": steps}
-                  
-                  # Step 2: Download Frida Gadget
-                  gadget_dir = work_dir / "gadget"
-                  gadget_dir.mkdir(exist_ok=True)
-                  
-                  frida_version = frida.__version__
-                  arch = request.architecture
-                  gadget_url = f"https://github.com/frida/frida/releases/download/{frida_version}/frida-gadget-{frida_version}-android-{arch}.so.xz"
-                  
-                  gadget_path = gadget_dir / f"libfrida-gadget.so"
-                  cmd = f"wget -q {gadget_url} -O {gadget_dir}/gadget.so.xz && xz -d {gadget_dir}/gadget.so.xz && mv {gadget_dir}/gadget.so {gadget_path}"
-                  result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=60)
-                  steps.append({"step": "download_gadget", "success": result.returncode == 0})
-                  
-                  if not gadget_path.exists():
-                      return {"success": False, "error": "Failed to download Frida Gadget", "steps": steps}
-                  
-                  # Step 3: Add gadget to lib directory
-                  lib_dir = decompiled / "lib" / arch
-                  lib_dir.mkdir(parents=True, exist_ok=True)
-                  shutil.copy(gadget_path, lib_dir / "libfrida-gadget.so")
-                  steps.append({"step": "copy_gadget", "success": True})
-                  
-                  # Step 4: Modify smali to load gadget
-                  # Find main activity
-                  manifest = decompiled / "AndroidManifest.xml"
-                  with open(manifest, 'r') as f:
-                      manifest_content = f.read()
-                  
-                  # Simple injection - add to Application class or main activity
-                  smali_dirs = list(decompiled.glob("smali*/"))
-                  injection_done = False
-                  
-                  for smali_dir in smali_dirs:
-                      for smali_file in smali_dir.rglob("*.smali"):
-                          with open(smali_file, 'r') as f:
-                              content = f.read()
-                          
-                          if ".method public constructor <init>" in content or ".method public onCreate" in content:
-                              # Inject loadLibrary call
-                              if 'const-string v0, "frida-gadget"' not in content:
-                                  injection = '''
-          .method static constructor <clinit>()V
-              .locals 1
-              const-string v0, "frida-gadget"
-              invoke-static {v0}, Ljava/lang/System;->loadLibrary(Ljava/lang/String;)V
-              return-void
-          .end method
-          '''
-                                  if ".method static constructor <clinit>" not in content:
-                                      content = content.replace(".super", injection + "\n.super", 1)
-                                      with open(smali_file, 'w') as f:
-                                          f.write(content)
-                                      injection_done = True
-                                      steps.append({"step": "inject_smali", "success": True, "file": str(smali_file)})
-                                      break
-                          if injection_done:
-                              break
-                      if injection_done:
-                          break
-                  
-                  # Step 5: Rebuild APK
-                  rebuilt = work_dir / "rebuilt.apk"
-                  cmd = f"apktool b {decompiled} -o {rebuilt}"
-                  result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=120)
-                  steps.append({"step": "rebuild", "success": result.returncode == 0, "output": result.stderr[:500]})
-                  
-                  if not rebuilt.exists():
-                      return {"success": False, "error": "Rebuild failed", "steps": steps}
-                  
-                  # Step 6: Sign APK
-                  signed = work_dir / "signed.apk"
-                  
-                  # Create keystore if needed
-                  keystore = work_dir / "debug.keystore"
-                  cmd = f'keytool -genkey -v -keystore {keystore} -alias androiddebugkey -keyalg RSA -keysize 2048 -validity 10000 -storepass android -keypass android -dname "CN=Android Debug,O=Android,C=US"'
-                  subprocess.run(cmd, shell=True, capture_output=True, timeout=30)
-                  
-                  # Align
-                  aligned = work_dir / "aligned.apk"
-                  cmd = f"zipalign -v 4 {rebuilt} {aligned}"
-                  subprocess.run(cmd, shell=True, capture_output=True, timeout=30)
-                  
-                  # Sign
-                  cmd = f"apksigner sign --ks {keystore} --ks-pass pass:android --key-pass pass:android --out {signed} {aligned}"
-                  result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=30)
-                  steps.append({"step": "sign", "success": result.returncode == 0})
-                  
-                  if signed.exists():
-                      final_path = PATCHED_DIR / f"{apk_path.stem}.patched.apk"
-                      shutil.copy(signed, final_path)
-                      
-                      return {
-                          "success": True,
-                          "original_apk": str(apk_path),
-                          "patched_apk": str(final_path),
-                          "steps": steps
-                      }
-                  else:
-                      return {"success": False, "error": "Signing failed", "steps": steps}
-                  
-              except Exception as e:
-                  return {"success": False, "error": str(e), "traceback": traceback.format_exc()}
           
           @app.post("/apk/install")
           def install_apk(apk_path: str):
@@ -1270,7 +960,6 @@ jobs:
           
           @app.post("/apk/decompile")
           def decompile_apk(request: DecompileRequest):
-              """Decompile APK using various tools"""
               try:
                   apk_path = Path(request.apk_path)
                   if not apk_path.exists():
@@ -1283,14 +972,6 @@ jobs:
                       cmd = f"jadx -d {output} --deobf {apk_path}"
                   elif request.tool == "apktool":
                       cmd = f"apktool d -f -o {output} {apk_path}"
-                  elif request.tool == "cfr":
-                      # First convert to jar
-                      jar_path = output / f"{apk_path.stem}.jar"
-                      subprocess.run(f"d2j-dex2jar -f -o {jar_path} {apk_path}", shell=True, timeout=120)
-                      cmd = f"cfr {jar_path} --outputdir {output}/src"
-                  elif request.tool == "enjarify":
-                      jar_path = output / f"{apk_path.stem}.jar"
-                      cmd = f"enjarify {apk_path} -o {jar_path}"
                   else:
                       return {"success": False, "error": f"Unknown tool: {request.tool}"}
                   
@@ -1305,8 +986,6 @@ jobs:
                   }
               except Exception as e:
                   return {"success": False, "error": str(e)}
-          
-          # ============== Frida Operations ==============
           
           @app.post("/frida/connect")
           def frida_connect():
@@ -1416,8 +1095,6 @@ jobs:
                   scripts.append({"name": f.stem, "path": str(f)})
               return {"success": True, "scripts": scripts}
           
-          # ============== File Operations ==============
-          
           @app.post("/upload")
           async def upload_file(file: UploadFile = File(...), destination: str = Form(default="/tmp/apks")):
               try:
@@ -1496,22 +1173,18 @@ jobs:
         run: |
           PORT=${{ inputs.server_port }}
           
-          # Start server
           python3 /tmp/android_security_executor.py &
           SERVER_PID=$!
           echo "SERVER_PID=$SERVER_PID" >> $GITHUB_ENV
           sleep 5
           
-          # Verify server
           curl -s http://localhost:$PORT/health || { echo "Server failed to start"; exit 1; }
           
-          # Start ngrok
           ngrok http $PORT --log=stdout > /tmp/ngrok.log 2>&1 &
           NGROK_PID=$!
           echo "NGROK_PID=$NGROK_PID" >> $GITHUB_ENV
           sleep 5
           
-          # Get URL
           NGROK_URL=$(curl -s http://localhost:4040/api/tunnels | jq -r '.tunnels[0].public_url')
           
           echo ""
@@ -1521,10 +1194,9 @@ jobs:
           echo "📡 PUBLIC URL: $NGROK_URL"
           echo ""
           echo "🔧 Available Tools:"
-          echo "   • Decompilers: JADX, CFR, Procyon, APKTool"
+          echo "   • Decompilers: JADX, APKTool"
           echo "   • Analysis: APKiD, Androguard, Radare2"
-          echo "   • Instrumentation: Frida ${frida --version}, Objection"
-          echo "   • Utilities: smali/baksmali, dex2jar, enjarify"
+          echo "   • Instrumentation: Frida, Objection"
           echo ""
           echo "📚 API Docs: $NGROK_URL/docs"
           echo "⏰ Session: ${{ inputs.session_duration }} minutes"
@@ -1561,7 +1233,7 @@ jobs:
         if: always()
         run: |
           echo "🧹 Cleaning up..."
-          ngrok kill 2>/dev/null || true
+          kill $NGROK_PID 2>/dev/null || true
           kill $EMULATOR_PID 2>/dev/null || true
           kill $SERVER_PID 2>/dev/null || true
           adb -s localhost:5555 emu kill 2>/dev/null || true
