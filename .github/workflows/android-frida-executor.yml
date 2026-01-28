@@ -1,4 +1,4 @@
-name: Android Security Testing - Complete Toolkit v3 (Rooted)
+name: Android Security Testing - Claude Frida Controller v4.0
 
 on:
   workflow_dispatch:
@@ -13,6 +13,8 @@ on:
           - '30'
           - '45'
           - '60'
+          - '90'
+          - '120'
       android_api:
         description: 'Android API level'
         required: true
@@ -34,36 +36,44 @@ on:
         type: boolean
 
 env:
-  # CRITICAL FIX #1: Use standard HOME-based paths that avdmanager expects by default
   ANDROID_AVD_HOME: /home/runner/.android/avd
   ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
   ANDROID_HOME: /usr/local/lib/android/sdk
   JAVA_HOME: /usr/lib/jvm/temurin-17-jdk-amd64
   ANDROID_API: ${{ inputs.android_api }}
   SERVER_PORT: ${{ inputs.server_port }}
+  WORK_DIR: /tmp/android_security
+  APK_DIR: /tmp/android_security/apks
+  OUTPUT_DIR: /tmp/android_security/output
+  SCRIPTS_DIR: /tmp/android_security/scripts
+  LOGS_DIR: /tmp/android_security/logs
 
 jobs:
   android-security-session:
     runs-on: ubuntu-latest
-    timeout-minutes: 65
+    timeout-minutes: 125
 
     steps:
-      # ============================================
-      # PHASE 1: SYSTEM SETUP
-      # ============================================
+      # ╔════════════════════════════════════════════════════════════════════════════╗
+      # ║  PHASE 1: SYSTEM SETUP                                                      ║
+      # ╚════════════════════════════════════════════════════════════════════════════╝
       
       - name: System Information
         run: |
-          echo "============================================"
-          echo "🚀 ANDROID SECURITY TESTING v3.0 (ROOTED)"
-          echo "============================================"
-          echo "Runner: $(uname -a)"
-          echo "CPU: $(nproc) cores"
-          echo "RAM: $(free -h | grep Mem | awk '{print $2}')"
-          echo "Disk: $(df -h / | tail -1 | awk '{print $4}') available"
-          echo "Android API: ${{ inputs.android_api }}"
-          echo "Session Duration: ${{ inputs.session_duration }} minutes"
-          echo "============================================"
+          echo "╔════════════════════════════════════════════════════════════════╗"
+          echo "║  🤖 CLAUDE ANDROID FRIDA CONTROLLER v4.0                       ║"
+          echo "║  Android Security Testing with Remote Control                  ║"
+          echo "╚════════════════════════════════════════════════════════════════╝"
+          echo ""
+          echo "📋 Configuration:"
+          echo "   Runner: $(uname -a)"
+          echo "   CPU: $(nproc) cores"
+          echo "   RAM: $(free -h | grep Mem | awk '{print $2}')"
+          echo "   Disk: $(df -h / | tail -1 | awk '{print $4}') available"
+          echo "   Android API: ${{ inputs.android_api }}"
+          echo "   Session Duration: ${{ inputs.session_duration }} minutes"
+          echo "   Server Port: ${{ inputs.server_port }}"
+          echo ""
 
       - name: Enable KVM Acceleration
         run: |
@@ -100,9 +110,9 @@ jobs:
             xz-utils p7zip-full
           echo "✅ System dependencies installed"
 
-      # ============================================
-      # PHASE 2: ANDROID SDK SETUP
-      # ============================================
+      # ╔════════════════════════════════════════════════════════════════════════════╗
+      # ║  PHASE 2: ANDROID SDK SETUP                                                 ║
+      # ╚════════════════════════════════════════════════════════════════════════════╝
 
       - name: Configure Android SDK Paths
         run: |
@@ -112,28 +122,16 @@ jobs:
           echo "$ANDROID_HOME/build-tools/34.0.0" >> $GITHUB_PATH
           echo "✅ Android SDK paths configured"
 
-      # ============================================================================
-      # CRITICAL FIX #2: Create AVD directory structure BEFORE any SDK operations
-      # ============================================================================
       - name: Initialize Android Directory Structure
         run: |
           echo "=== Creating Android directory structure ==="
-          
-          # Create the .android directory and subdirectories
           mkdir -p /home/runner/.android/avd
           mkdir -p /home/runner/.android/cache
-          
-          # Set proper permissions
           chmod -R 755 /home/runner/.android
-          
-          # Verify directories exist
           echo "Verifying directory structure:"
           ls -la /home/runner/.android/
-          
-          # Export for subsequent steps
           echo "ANDROID_AVD_HOME=/home/runner/.android/avd" >> $GITHUB_ENV
           echo "ANDROID_USER_HOME=/home/runner/.android" >> $GITHUB_ENV
-          
           echo "✅ Android directory structure created"
 
       - name: Install Android SDK Components
@@ -156,13 +154,11 @@ jobs:
           $SDKMANAGER --install "platforms;android-${{ inputs.android_api }}"
           
           echo "=== Installing System Image (PlayStore for rootAVD) ==="
-          # CRITICAL: Use google_apis_playstore for rootAVD compatibility
           $SDKMANAGER --install "system-images;android-${{ inputs.android_api }};google_apis_playstore;x86_64"
           
           echo "=== Verifying Installation ==="
           $SDKMANAGER --list_installed | grep -E "system-images|build-tools|platform-tools|emulator" || true
           
-          # CRITICAL FIX #3: Verify system image is actually installed
           echo "=== Verifying System Image Path ==="
           SYSIMG_PATH="$ANDROID_HOME/system-images/android-${{ inputs.android_api }}/google_apis_playstore/x86_64"
           if [ -d "$SYSIMG_PATH" ]; then
@@ -170,7 +166,6 @@ jobs:
             ls -la "$SYSIMG_PATH"
           else
             echo "❌ ERROR: System image NOT found at: $SYSIMG_PATH"
-            echo "Looking for any system images..."
             find $ANDROID_HOME/system-images -type d -name "x86_64" 2>/dev/null | head -10
             exit 1
           fi
@@ -178,9 +173,9 @@ jobs:
           adb version
           echo "✅ Android SDK components installed"
 
-      # ============================================
-      # PHASE 3: SECURITY TOOLS INSTALLATION
-      # ============================================
+      # ╔════════════════════════════════════════════════════════════════════════════╗
+      # ║  PHASE 3: SECURITY TOOLS INSTALLATION                                       ║
+      # ╚════════════════════════════════════════════════════════════════════════════╝
 
       - name: Install APKTool
         run: |
@@ -207,208 +202,394 @@ jobs:
           pip install frida-tools objection androguard lief --break-system-packages
           
           # Install uber-apk-signer
-          wget -q "https://github.com/nicebyte/uber-apk-signer/releases/latest/download/uber-apk-signer.jar" -O /tmp/uber-apk-signer.jar 2>/dev/null || \
-          wget -q "https://github.com/nicebyte/uber-apk-signer/releases/download/0.0.1/uber-apk-signer-0.0.1.jar" -O /tmp/uber-apk-signer.jar || true
+          UBER_VERSION="1.3.0"
+          wget -q "https://github.com/nicoboss/uber-apk-signer/releases/download/v${UBER_VERSION}/uber-apk-signer-${UBER_VERSION}.jar" -O /tmp/uber-apk-signer.jar
+          sudo mv /tmp/uber-apk-signer.jar /usr/local/bin/
           
-          echo "Frida version: $(frida --version)"
-          echo "Objection version: $(objection version 2>&1 | head -1)"
+          # Verify
+          frida --version
+          objection version || echo "Objection installed"
           echo "✅ Python security tools installed"
-
-      - name: Install Dex2Jar
-        continue-on-error: true
-        run: |
-          DEX2JAR_VERSION="2.4"
-          wget -q "https://github.com/pxb1988/dex2jar/releases/download/v${DEX2JAR_VERSION}/dex-tools-v${DEX2JAR_VERSION}.zip" -O dex2jar.zip || \
-          wget -q "https://github.com/pxb1988/dex2jar/releases/download/2.1/dex-tools-2.1.zip" -O dex2jar.zip
-          sudo unzip -q dex2jar.zip -d /opt/ || true
-          sudo chmod +x /opt/dex-tools-*/d2j-*.sh 2>/dev/null || sudo chmod +x /opt/dex2jar-*/d2j-*.sh 2>/dev/null || true
-          echo "✅ Dex2Jar installed"
-
-      - name: Install Smali/Baksmali
-        continue-on-error: true
-        run: |
-          SMALI_VERSION="3.0.5"
-          wget -q "https://github.com/google/smali/releases/download/v${SMALI_VERSION}/smali-${SMALI_VERSION}.jar" -O /tmp/smali.jar || \
-          wget -q "https://bitbucket.org/JesusFreke/smali/downloads/smali-2.5.2.jar" -O /tmp/smali.jar || true
-          
-          wget -q "https://github.com/google/smali/releases/download/v${SMALI_VERSION}/baksmali-${SMALI_VERSION}.jar" -O /tmp/baksmali.jar || \
-          wget -q "https://bitbucket.org/JesusFreke/smali/downloads/baksmali-2.5.2.jar" -O /tmp/baksmali.jar || true
-          
-          if [ -f /tmp/smali.jar ]; then
-            echo '#!/bin/bash' | sudo tee /usr/local/bin/smali
-            echo 'java -jar /tmp/smali.jar "$@"' | sudo tee -a /usr/local/bin/smali
-            sudo chmod +x /usr/local/bin/smali
-          fi
-          
-          if [ -f /tmp/baksmali.jar ]; then
-            echo '#!/bin/bash' | sudo tee /usr/local/bin/baksmali
-            echo 'java -jar /tmp/baksmali.jar "$@"' | sudo tee -a /usr/local/bin/baksmali
-            sudo chmod +x /usr/local/bin/baksmali
-          fi
-          echo "✅ Smali/Baksmali installed"
-
-      - name: Install CFR Decompiler
-        continue-on-error: true
-        run: |
-          CFR_VERSION="0.152"
-          wget -q "https://github.com/leibnitz27/cfr/releases/download/${CFR_VERSION}/cfr-${CFR_VERSION}.jar" -O /tmp/cfr.jar || true
-          if [ -f /tmp/cfr.jar ]; then
-            echo '#!/bin/bash' | sudo tee /usr/local/bin/cfr
-            echo 'java -jar /tmp/cfr.jar "$@"' | sudo tee -a /usr/local/bin/cfr
-            sudo chmod +x /usr/local/bin/cfr
-          fi
-          echo "✅ CFR installed"
 
       - name: Install Advanced Tools
         if: ${{ inputs.enable_advanced_tools }}
-        continue-on-error: true
         run: |
-          # Radare2
-          sudo apt-get install -y radare2 || {
+          # Install radare2
+          sudo apt-get install -y -qq radare2 || {
             git clone --depth=1 https://github.com/radareorg/radare2.git /tmp/radare2
             cd /tmp/radare2 && sys/install.sh
           }
           
-          # APKiD
-          pip install apkid --break-system-packages || true
-          
-          # Quark Engine
-          pip install quark-engine --break-system-packages || true
+          # Install APKiD
+          pip install apkid --break-system-packages || echo "APKiD install attempted"
           
           echo "✅ Advanced tools installed"
 
-      # ============================================
-      # PHASE 4: CREATE AND START EMULATOR (FIXED)
-      # ============================================
+      - name: Install FastAPI Server Dependencies
+        run: |
+          pip install fastapi uvicorn pyngrok httpx aiofiles python-multipart psutil --break-system-packages
+          echo "✅ FastAPI server dependencies installed"
 
-      # ============================================================================
-      # CRITICAL FIX #4: Comprehensive AVD creation with full error handling
-      # ============================================================================
+      # ╔════════════════════════════════════════════════════════════════════════════╗
+      # ║  PHASE 4: CREATE WORKING DIRECTORIES & FRIDA SCRIPTS                        ║
+      # ╚════════════════════════════════════════════════════════════════════════════╝
+
+      - name: Create Working Directories
+        run: |
+          mkdir -p $WORK_DIR
+          mkdir -p $APK_DIR
+          mkdir -p $OUTPUT_DIR
+          mkdir -p $SCRIPTS_DIR
+          mkdir -p $LOGS_DIR
+          echo "✅ Working directories created"
+
+      - name: Create Frida Bypass Scripts
+        run: |
+          # Root Detection Bypass Script
+          cat > $SCRIPTS_DIR/root_bypass.js << 'ROOTBYPASS'
+          // Root Detection Bypass - Comprehensive
+          Java.perform(function() {
+              console.log("[*] Root Detection Bypass loaded");
+              
+              // Hook File.exists for common root paths
+              var File = Java.use("java.io.File");
+              File.exists.implementation = function() {
+                  var path = this.getAbsolutePath();
+                  var rootPaths = ["/system/app/Superuser.apk", "/system/xbin/su", "/system/bin/su",
+                      "/sbin/su", "/data/local/xbin/su", "/data/local/bin/su", "/data/local/su",
+                      "/system/sd/xbin/su", "/system/bin/failsafe/su", "/su/bin/su", "/magisk"];
+                  for (var i = 0; i < rootPaths.length; i++) {
+                      if (path.indexOf(rootPaths[i]) !== -1) {
+                          console.log("[+] Hiding root path: " + path);
+                          return false;
+                      }
+                  }
+                  return this.exists();
+              };
+              
+              // Hook Runtime.exec for su commands
+              var Runtime = Java.use("java.lang.Runtime");
+              Runtime.exec.overload('java.lang.String').implementation = function(cmd) {
+                  if (cmd.indexOf("su") !== -1 || cmd.indexOf("which") !== -1) {
+                      console.log("[+] Blocking exec: " + cmd);
+                      throw new Error("Command not found");
+                  }
+                  return this.exec(cmd);
+              };
+              
+              // Hook Build properties
+              var Build = Java.use("android.os.Build");
+              Build.TAGS.value = "release-keys";
+              Build.FINGERPRINT.value = Build.FINGERPRINT.value.replace("test-keys", "release-keys");
+              
+              console.log("[*] Root detection bypass active");
+          });
+          ROOTBYPASS
+          
+          # SSL Pinning Bypass Script
+          cat > $SCRIPTS_DIR/ssl_bypass.js << 'SSLBYPASS'
+          // SSL Pinning Bypass - Universal
+          Java.perform(function() {
+              console.log("[*] SSL Pinning Bypass loaded");
+              
+              // TrustManager bypass
+              var TrustManager = Java.registerClass({
+                  name: 'com.frida.TrustManager',
+                  implements: [Java.use('javax.net.ssl.X509TrustManager')],
+                  methods: {
+                      checkClientTrusted: function(chain, authType) {},
+                      checkServerTrusted: function(chain, authType) {},
+                      getAcceptedIssuers: function() { return []; }
+                  }
+              });
+              
+              // SSLContext bypass
+              var SSLContext = Java.use('javax.net.ssl.SSLContext');
+              SSLContext.init.overload('[Ljavax.net.ssl.KeyManager;', '[Ljavax.net.ssl.TrustManager;', 'java.security.SecureRandom').implementation = function(km, tm, sr) {
+                  console.log("[+] Bypassing SSLContext.init");
+                  this.init(km, [TrustManager.$new()], sr);
+              };
+              
+              // OkHttp CertificatePinner bypass
+              try {
+                  var CertificatePinner = Java.use('okhttp3.CertificatePinner');
+                  CertificatePinner.check.overload('java.lang.String', 'java.util.List').implementation = function(hostname, peerCertificates) {
+                      console.log("[+] OkHttp bypass for: " + hostname);
+                  };
+                  CertificatePinner.check.overload('java.lang.String', '[Ljava.security.cert.Certificate;').implementation = function(hostname, certs) {
+                      console.log("[+] OkHttp bypass for: " + hostname);
+                  };
+              } catch(e) {}
+              
+              // WebViewClient bypass
+              try {
+                  var WebViewClient = Java.use('android.webkit.WebViewClient');
+                  WebViewClient.onReceivedSslError.implementation = function(view, handler, error) {
+                      console.log("[+] WebView SSL error bypassed");
+                      handler.proceed();
+                  };
+              } catch(e) {}
+              
+              console.log("[*] SSL pinning bypass active");
+          });
+          SSLBYPASS
+          
+          # Emulator Detection Bypass Script
+          cat > $SCRIPTS_DIR/emulator_bypass.js << 'EMUBYPASS'
+          // Emulator Detection Bypass
+          Java.perform(function() {
+              console.log("[*] Emulator Detection Bypass loaded");
+              
+              var Build = Java.use("android.os.Build");
+              
+              // Spoof build properties
+              Build.FINGERPRINT.value = "google/blueline/blueline:11/RQ3A.211001.001/7641976:user/release-keys";
+              Build.MODEL.value = "Pixel 3";
+              Build.MANUFACTURER.value = "Google";
+              Build.BRAND.value = "google";
+              Build.DEVICE.value = "blueline";
+              Build.PRODUCT.value = "blueline";
+              Build.HARDWARE.value = "blueline";
+              Build.BOARD.value = "blueline";
+              Build.HOST.value = "build.google.com";
+              
+              // Hide emulator-specific files
+              var File = Java.use("java.io.File");
+              File.exists.implementation = function() {
+                  var path = this.getAbsolutePath();
+                  var emuPaths = ["/dev/socket/qemud", "/dev/qemu_pipe", "/system/lib/libc_malloc_debug_qemu.so",
+                      "/sys/qemu_trace", "/system/bin/qemu-props", "/dev/goldfish_pipe"];
+                  for (var i = 0; i < emuPaths.length; i++) {
+                      if (path.indexOf(emuPaths[i]) !== -1) {
+                          console.log("[+] Hiding emulator path: " + path);
+                          return false;
+                      }
+                  }
+                  return this.exists();
+              };
+              
+              // Spoof TelephonyManager
+              try {
+                  var TelephonyManager = Java.use("android.telephony.TelephonyManager");
+                  TelephonyManager.getDeviceId.overload().implementation = function() {
+                      return "358240051111110";
+                  };
+                  TelephonyManager.getSubscriberId.implementation = function() {
+                      return "310260000000000";
+                  };
+                  TelephonyManager.getLine1Number.implementation = function() {
+                      return "+15555555555";
+                  };
+                  TelephonyManager.getNetworkOperatorName.implementation = function() {
+                      return "T-Mobile";
+                  };
+                  TelephonyManager.getSimOperatorName.implementation = function() {
+                      return "T-Mobile";
+                  };
+              } catch(e) {}
+              
+              console.log("[*] Emulator detection bypass active");
+          });
+          EMUBYPASS
+          
+          # Frida Detection Bypass Script
+          cat > $SCRIPTS_DIR/frida_bypass.js << 'FRIDABYPASS'
+          // Frida Detection Bypass
+          Java.perform(function() {
+              console.log("[*] Frida Detection Bypass loaded");
+              
+              // Hide Frida port
+              var Socket = Java.use("java.net.Socket");
+              Socket.$init.overload("java.lang.String", "int").implementation = function(host, port) {
+                  if (port === 27042 || port === 27043) {
+                      console.log("[+] Blocking Frida port connection: " + port);
+                      throw new Error("Connection refused");
+                  }
+                  return this.$init(host, port);
+              };
+              
+              // Hide frida-server process
+              var Runtime = Java.use("java.lang.Runtime");
+              Runtime.exec.overload('[Ljava.lang.String;').implementation = function(cmds) {
+                  for (var i = 0; i < cmds.length; i++) {
+                      if (cmds[i].indexOf("frida") !== -1) {
+                          console.log("[+] Blocking frida check command");
+                          throw new Error("Command not found");
+                      }
+                  }
+                  return this.exec(cmds);
+              };
+              
+              // Hide frida libs from maps
+              var BufferedReader = Java.use("java.io.BufferedReader");
+              BufferedReader.readLine.overload().implementation = function() {
+                  var line = this.readLine();
+                  if (line !== null && (line.indexOf("frida") !== -1 || line.indexOf("gum-js-loop") !== -1)) {
+                      console.log("[+] Hiding frida from maps");
+                      return "";
+                  }
+                  return line;
+              };
+              
+              console.log("[*] Frida detection bypass active");
+          });
+          FRIDABYPASS
+          
+          # Combined All-Bypass Script
+          cat > $SCRIPTS_DIR/all_bypass.js << 'ALLBYPASS'
+          // Combined All-in-One Bypass Script
+          Java.perform(function() {
+              console.log("╔════════════════════════════════════════════════════════════╗");
+              console.log("║  🛡️ ALL SECURITY BYPASSES LOADING...                       ║");
+              console.log("╚════════════════════════════════════════════════════════════╝");
+              
+              // ==================== ROOT DETECTION BYPASS ====================
+              var File = Java.use("java.io.File");
+              var originalExists = File.exists;
+              File.exists.implementation = function() {
+                  var path = this.getAbsolutePath();
+                  var hidePaths = [
+                      "/system/app/Superuser.apk", "/system/xbin/su", "/system/bin/su",
+                      "/sbin/su", "/data/local/xbin/su", "/data/local/bin/su", "/data/local/su",
+                      "/su/bin/su", "/magisk", "/dev/socket/qemud", "/dev/qemu_pipe",
+                      "/system/lib/libc_malloc_debug_qemu.so", "/dev/goldfish_pipe"
+                  ];
+                  for (var i = 0; i < hidePaths.length; i++) {
+                      if (path.indexOf(hidePaths[i]) !== -1) {
+                          console.log("[ROOT/EMU] Hiding: " + path);
+                          return false;
+                      }
+                  }
+                  return originalExists.call(this);
+              };
+              
+              // ==================== BUILD PROPERTIES SPOOF ====================
+              var Build = Java.use("android.os.Build");
+              Build.TAGS.value = "release-keys";
+              Build.FINGERPRINT.value = "google/blueline/blueline:11/RQ3A.211001.001/7641976:user/release-keys";
+              Build.MODEL.value = "Pixel 3";
+              Build.MANUFACTURER.value = "Google";
+              Build.BRAND.value = "google";
+              Build.DEVICE.value = "blueline";
+              Build.PRODUCT.value = "blueline";
+              Build.HARDWARE.value = "blueline";
+              console.log("[EMU] Build properties spoofed");
+              
+              // ==================== SSL PINNING BYPASS ====================
+              var TrustManager = Java.registerClass({
+                  name: 'com.bypass.TrustManager',
+                  implements: [Java.use('javax.net.ssl.X509TrustManager')],
+                  methods: {
+                      checkClientTrusted: function(chain, authType) {},
+                      checkServerTrusted: function(chain, authType) {},
+                      getAcceptedIssuers: function() { return []; }
+                  }
+              });
+              
+              var SSLContext = Java.use('javax.net.ssl.SSLContext');
+              SSLContext.init.overload('[Ljavax.net.ssl.KeyManager;', '[Ljavax.net.ssl.TrustManager;', 'java.security.SecureRandom').implementation = function(km, tm, sr) {
+                  console.log("[SSL] Bypassing SSLContext.init");
+                  this.init(km, [TrustManager.$new()], sr);
+              };
+              
+              try {
+                  var CertificatePinner = Java.use('okhttp3.CertificatePinner');
+                  CertificatePinner.check.overload('java.lang.String', 'java.util.List').implementation = function(h, p) {
+                      console.log("[SSL] OkHttp bypass: " + h);
+                  };
+              } catch(e) {}
+              
+              // ==================== FRIDA DETECTION BYPASS ====================
+              var Socket = Java.use("java.net.Socket");
+              Socket.$init.overload("java.lang.String", "int").implementation = function(host, port) {
+                  if (port === 27042 || port === 27043) {
+                      console.log("[FRIDA] Blocking port: " + port);
+                      throw new Error("Connection refused");
+                  }
+                  return this.$init(host, port);
+              };
+              
+              console.log("╔════════════════════════════════════════════════════════════╗");
+              console.log("║  ✅ ALL SECURITY BYPASSES ACTIVE                           ║");
+              console.log("╚════════════════════════════════════════════════════════════╝");
+          });
+          ALLBYPASS
+          
+          echo "✅ Frida bypass scripts created"
+          ls -la $SCRIPTS_DIR/
+
+      # ╔════════════════════════════════════════════════════════════════════════════╗
+      # ║  PHASE 5: CREATE AVD AND START EMULATOR                                     ║
+      # ╚════════════════════════════════════════════════════════════════════════════╝
+
       - name: Create Android Virtual Device
         run: |
-          set -e  # Exit on any error
-          
+          set -e
           AVDMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/avdmanager"
-          ANDROID_API="${{ inputs.android_api }}"
           AVD_NAME="security_avd"
-          SYSTEM_IMAGE="system-images;android-${ANDROID_API};google_apis_playstore;x86_64"
           
-          echo "============================================"
-          echo "=== AVD Creation Debug Information ==="
-          echo "============================================"
-          echo "ANDROID_HOME: $ANDROID_HOME"
+          echo "=== Pre-creation Verification ==="
           echo "ANDROID_AVD_HOME: $ANDROID_AVD_HOME"
-          echo "ANDROID_USER_HOME: ${ANDROID_USER_HOME:-not set}"
-          echo "HOME: $HOME"
-          echo "AVD_NAME: $AVD_NAME"
-          echo "SYSTEM_IMAGE: $SYSTEM_IMAGE"
-          echo "============================================"
+          ls -la /home/runner/.android/ || true
           
-          # CRITICAL FIX #5: Ensure AVD home directory exists with correct structure
-          echo "=== Ensuring AVD directory structure ==="
           mkdir -p "$ANDROID_AVD_HOME"
-          mkdir -p "/home/runner/.android"
-          chmod -R 755 /home/runner/.android
-          ls -la /home/runner/.android/
           
-          # CRITICAL FIX #6: List available device profiles to find valid ones
-          echo "=== Available Device Profiles ==="
-          $AVDMANAGER list device 2>&1 | grep -E "^id:|^Name:" | head -40 || true
-          
-          # CRITICAL FIX #7: Verify system image package path
-          echo "=== Verifying System Image Package ==="
-          SYSIMG_DIR="$ANDROID_HOME/system-images/android-${ANDROID_API}/google_apis_playstore/x86_64"
-          if [ ! -d "$SYSIMG_DIR" ]; then
-            echo "❌ ERROR: System image directory not found!"
-            echo "Expected: $SYSIMG_DIR"
-            echo "Available system images:"
-            find "$ANDROID_HOME/system-images" -type d -name "x86_64" 2>/dev/null || echo "None found"
-            exit 1
-          fi
-          echo "✅ System image directory verified: $SYSIMG_DIR"
-          ls -la "$SYSIMG_DIR"
-          
-          # CRITICAL FIX #8: Clean up any existing AVD first
-          echo "=== Cleaning up existing AVD (if any) ==="
+          echo "=== Cleaning up any existing AVD ==="
           $AVDMANAGER delete avd -n "$AVD_NAME" 2>/dev/null || true
           rm -rf "$ANDROID_AVD_HOME/${AVD_NAME}.avd" 2>/dev/null || true
           rm -f "$ANDROID_AVD_HOME/${AVD_NAME}.ini" 2>/dev/null || true
           
-          # CRITICAL FIX #9: Create AVD with VERBOSE mode and proper device
-          # Using "pixel" instead of "pixel_4" as it's more universally available
-          echo "=== Creating AVD with PlayStore image (VERBOSE) ==="
+          echo "=== Creating AVD ==="
           echo "no" | $AVDMANAGER --verbose create avd \
             --force \
             --name "$AVD_NAME" \
-            --package "$SYSTEM_IMAGE" \
+            --package "system-images;android-${{ inputs.android_api }};google_apis_playstore;x86_64" \
             --device "pixel" \
-            --abi "x86_64" \
-            --tag "google_apis_playstore" 2>&1 || {
-              echo "❌ First attempt failed, trying without device specification..."
+            --abi "x86_64" 2>&1 || {
+              echo "Trying without device specification..."
               echo "no" | $AVDMANAGER --verbose create avd \
                 --force \
                 --name "$AVD_NAME" \
-                --package "$SYSTEM_IMAGE" \
+                --package "system-images;android-${{ inputs.android_api }};google_apis_playstore;x86_64" \
                 --abi "x86_64" 2>&1
             }
           
-          # CRITICAL FIX #10: Verify AVD was actually created
-          echo "=== Verifying AVD Creation ==="
-          echo "Contents of ANDROID_AVD_HOME ($ANDROID_AVD_HOME):"
-          ls -la "$ANDROID_AVD_HOME/" || echo "Directory empty or doesn't exist"
-          
-          if [ -f "$ANDROID_AVD_HOME/${AVD_NAME}.ini" ]; then
-            echo "✅ AVD ini file found!"
-            cat "$ANDROID_AVD_HOME/${AVD_NAME}.ini"
-          else
+          echo "=== Post-creation Verification ==="
+          if [ ! -f "$ANDROID_AVD_HOME/${AVD_NAME}.ini" ]; then
             echo "❌ ERROR: AVD ini file NOT created!"
-            echo "Checking alternative locations..."
-            find /home/runner -name "${AVD_NAME}.ini" 2>/dev/null || echo "Not found anywhere"
+            echo "Contents of ANDROID_AVD_HOME:"
+            ls -la "$ANDROID_AVD_HOME/" || true
             exit 1
           fi
           
-          if [ -d "$ANDROID_AVD_HOME/${AVD_NAME}.avd" ]; then
-            echo "✅ AVD directory found!"
-            ls -la "$ANDROID_AVD_HOME/${AVD_NAME}.avd/"
-          else
-            echo "❌ ERROR: AVD directory NOT created!"
-            exit 1
+          echo "✅ AVD ini file found"
+          cat "$ANDROID_AVD_HOME/${AVD_NAME}.ini"
+          
+          echo "=== Optimizing AVD config ==="
+          AVD_CONFIG="$ANDROID_AVD_HOME/${AVD_NAME}.avd/config.ini"
+          if [ -f "$AVD_CONFIG" ]; then
+            echo "hw.ramSize=4096" >> "$AVD_CONFIG"
+            echo "hw.keyboard=yes" >> "$AVD_CONFIG"
+            echo "hw.gpu.enabled=yes" >> "$AVD_CONFIG"
+            echo "hw.gpu.mode=swiftshader_indirect" >> "$AVD_CONFIG"
+            echo "disk.dataPartition.size=8G" >> "$AVD_CONFIG"
           fi
           
-          # CRITICAL FIX #11: List all AVDs to confirm
-          echo "=== Listing All AVDs ==="
+          echo "=== Cross-verification ==="
+          echo "Emulator list:"
+          $ANDROID_HOME/emulator/emulator -list-avds
+          echo ""
+          echo "AVDManager list:"
           $AVDMANAGER list avd
           
-          # CRITICAL FIX #12: Use emulator to list AVDs (cross-verification)
-          echo "=== Emulator AVD List ==="
-          $ANDROID_HOME/emulator/emulator -list-avds
-          
-          # Configure AVD for better performance
-          echo "=== Configuring AVD for CI ==="
-          CONFIG_FILE="$ANDROID_AVD_HOME/${AVD_NAME}.avd/config.ini"
-          if [ -f "$CONFIG_FILE" ]; then
-            echo "hw.keyboard=yes" >> "$CONFIG_FILE"
-            echo "hw.gpu.enabled=yes" >> "$CONFIG_FILE"
-            echo "hw.gpu.mode=swiftshader_indirect" >> "$CONFIG_FILE"
-            echo "disk.dataPartition.size=4G" >> "$CONFIG_FILE"
-            echo "✅ AVD config updated"
-          fi
-          
-          echo "✅ AVD created and verified successfully!"
+          echo "✅ AVD created successfully"
 
-      # ============================================================================
-      # CRITICAL FIX #13: Improved emulator startup with verification
-      # ============================================================================
       - name: Start Android Emulator
         run: |
           set -e
-          
           AVD_NAME="security_avd"
           
-          echo "=== Pre-flight Checks ==="
-          
-          # Verify AVD exists before attempting to start
-          echo "Checking AVD exists..."
+          echo "=== Verifying AVD exists ==="
           if ! $ANDROID_HOME/emulator/emulator -list-avds | grep -q "$AVD_NAME"; then
             echo "❌ ERROR: AVD '$AVD_NAME' not found in emulator list!"
             echo "Available AVDs:"
@@ -417,16 +598,12 @@ jobs:
           fi
           echo "✅ AVD '$AVD_NAME' found"
           
-          # Kill any existing emulator processes
           echo "Cleaning up existing emulator processes..."
           pkill -9 -f "emulator" 2>/dev/null || true
           pkill -9 -f "qemu-system" 2>/dev/null || true
           sleep 3
           
           echo "=== Starting Emulator ==="
-          
-          # Start emulator with writable-system for rootAVD
-          # CRITICAL FIX #14: Use @ syntax and proper environment
           export ANDROID_AVD_HOME="/home/runner/.android/avd"
           
           nohup $ANDROID_HOME/emulator/emulator \
@@ -442,37 +619,29 @@ jobs:
             -cores 2 \
             -partition-size 8192 \
             -verbose \
-            2>&1 | tee /tmp/emulator.log &
+            2>&1 | tee $LOGS_DIR/emulator.log &
           
           EMULATOR_PID=$!
           echo "Emulator PID: $EMULATOR_PID"
           echo "EMULATOR_PID=$EMULATOR_PID" >> $GITHUB_ENV
           
-          # Wait for emulator process to initialize
           sleep 10
           
-          # Check if emulator is still running
           if ! kill -0 $EMULATOR_PID 2>/dev/null; then
             echo "❌ ERROR: Emulator process died!"
             echo "=== Emulator Log ==="
-            cat /tmp/emulator.log | tail -100
+            cat $LOGS_DIR/emulator.log | tail -100
             exit 1
           fi
           
           echo "✅ Emulator process started successfully"
-          echo "First 50 lines of emulator log:"
-          head -50 /tmp/emulator.log || true
 
-      # ============================================================================
-      # CRITICAL FIX #15: Improved boot wait with better diagnostics
-      # ============================================================================
       - name: Wait for Emulator Boot
         run: |
           echo "=== Waiting for Emulator ==="
           TIMEOUT=300
           ELAPSED=0
           
-          # Wait for ADB to see the device first
           echo "Waiting for ADB device..."
           while [ $ELAPSED -lt 60 ]; do
             if adb devices 2>/dev/null | grep -q "emulator-"; then
@@ -486,14 +655,11 @@ jobs:
           
           if ! adb devices 2>/dev/null | grep -q "emulator-"; then
             echo "❌ ERROR: No emulator device found by ADB!"
-            echo "=== ADB Devices ==="
             adb devices -l
-            echo "=== Emulator Log (last 100 lines) ==="
-            tail -100 /tmp/emulator.log || true
+            tail -100 $LOGS_DIR/emulator.log || true
             exit 1
           fi
           
-          # Now wait for boot completion
           echo "Waiting for boot completion..."
           ELAPSED=0
           while [ $ELAPSED -lt $TIMEOUT ]; do
@@ -504,28 +670,20 @@ jobs:
             fi
             sleep 5
             ELAPSED=$((ELAPSED + 5))
-            
-            # Additional boot status info
             BOOT_ANIM=$(adb shell getprop init.svc.bootanim 2>/dev/null | tr -d '\r\n' || echo "unknown")
             echo "⏳ Waiting... ${ELAPSED}s (boot_completed=$BOOT_COMPLETED, bootanim=$BOOT_ANIM)"
           done
           
           if [ $ELAPSED -ge $TIMEOUT ]; then
             echo "❌ ERROR: Emulator boot timeout"
-            echo "=== ADB Devices ==="
             adb devices -l
-            echo "=== System Properties ==="
-            adb shell getprop | head -50 || true
-            echo "=== Emulator Log (last 100 lines) ==="
-            tail -100 /tmp/emulator.log || true
+            tail -100 $LOGS_DIR/emulator.log || true
             exit 1
           fi
           
-          # Additional stability wait
           echo "Waiting for system stability..."
           sleep 20
           
-          # Verify ADB connection
           echo "=== Final Verification ==="
           adb devices -l
           echo "Android Version: $(adb shell getprop ro.build.version.release)"
@@ -533,9 +691,9 @@ jobs:
           echo "Device: $(adb shell getprop ro.product.device)"
           echo "✅ Emulator ready"
 
-      # ============================================
-      # PHASE 5: ROOT EMULATOR WITH MAGISK
-      # ============================================
+      # ╔════════════════════════════════════════════════════════════════════════════╗
+      # ║  PHASE 6: ROOT EMULATOR WITH MAGISK                                         ║
+      # ╚════════════════════════════════════════════════════════════════════════════╝
 
       - name: Clone rootAVD
         run: |
@@ -552,20 +710,17 @@ jobs:
           echo "=== Rooting AVD with Magisk ==="
           cd /tmp/rootAVD
           
-          # Find ramdisk path
           RAMDISK_PATH="$ANDROID_HOME/system-images/android-${{ inputs.android_api }}/google_apis_playstore/x86_64/ramdisk.img"
           
           if [ ! -f "$RAMDISK_PATH" ]; then
             echo "Looking for ramdisk..."
             find $ANDROID_HOME/system-images -name "ramdisk.img" 2>/dev/null | head -5
-            # Try alternative path
             RAMDISK_PATH=$(find $ANDROID_HOME/system-images -path "*android-${{ inputs.android_api }}*" -name "ramdisk.img" | head -1)
           fi
           
           echo "Ramdisk: $RAMDISK_PATH"
           
           if [ -f "$RAMDISK_PATH" ]; then
-            # Run rootAVD with auto-selection of stable Magisk (option 1)
             echo "1" | timeout 300 ./rootAVD.sh "$RAMDISK_PATH" || {
               echo "rootAVD completed (may have warnings)"
             }
@@ -579,11 +734,8 @@ jobs:
         continue-on-error: true
         run: |
           echo "=== Verifying Root ==="
-          
-          # Check if Magisk is installed
           adb shell pm list packages | grep -i magisk || echo "Magisk package not found yet"
           
-          # Try to get root
           ROOT_TEST=$(adb shell "su -c 'whoami'" 2>&1 || echo "no_root")
           if echo "$ROOT_TEST" | grep -q "root"; then
             echo "✅ Root access confirmed!"
@@ -595,26 +747,754 @@ jobs:
           
           echo "✅ Root verification completed"
 
-      # Continue with the rest of your original workflow steps from here...
-      # (PHASE 6 onwards - add your remaining steps)
+      # ╔════════════════════════════════════════════════════════════════════════════╗
+      # ║  PHASE 7: START FRIDA SERVER                                                ║
+      # ╚════════════════════════════════════════════════════════════════════════════╝
 
-      - name: Create Working Directories
+      - name: Download and Start Frida Server
         run: |
-          mkdir -p /tmp/apks
-          mkdir -p /tmp/output
-          mkdir -p /tmp/logs
-          mkdir -p /tmp/scripts
-          echo "✅ Working directories created"
+          echo "=== Setting up Frida Server ==="
+          
+          # Get Frida version
+          FRIDA_VERSION=$(frida --version)
+          echo "Frida version: $FRIDA_VERSION"
+          
+          # Download Frida server for Android x86_64
+          FRIDA_SERVER_URL="https://github.com/frida/frida/releases/download/${FRIDA_VERSION}/frida-server-${FRIDA_VERSION}-android-x86_64.xz"
+          echo "Downloading from: $FRIDA_SERVER_URL"
+          
+          wget -q "$FRIDA_SERVER_URL" -O /tmp/frida-server.xz || {
+            echo "Trying alternative download..."
+            FRIDA_VERSION=$(pip show frida-tools | grep Version | cut -d' ' -f2)
+            wget -q "https://github.com/frida/frida/releases/download/${FRIDA_VERSION}/frida-server-${FRIDA_VERSION}-android-x86_64.xz" -O /tmp/frida-server.xz
+          }
+          
+          xz -d /tmp/frida-server.xz
+          chmod +x /tmp/frida-server
+          
+          # Push to device
+          adb push /tmp/frida-server /data/local/tmp/frida-server
+          adb shell chmod 755 /data/local/tmp/frida-server
+          
+          # Start Frida server
+          echo "Starting Frida server..."
+          adb shell "su -c '/data/local/tmp/frida-server -D &'" 2>/dev/null || \
+          adb shell "/data/local/tmp/frida-server -D &" 2>/dev/null || {
+            echo "Starting Frida server without root..."
+            adb shell "/data/local/tmp/frida-server &"
+          }
+          
+          sleep 5
+          
+          # Verify Frida server
+          echo "Testing Frida connection..."
+          frida-ps -U || echo "Frida-ps check completed"
+          
+          echo "✅ Frida server setup completed"
 
-      # Add your remaining steps here (FastAPI server, ngrok, etc.)
-      # Copy from original workflow lines 350 onwards
+      # ╔════════════════════════════════════════════════════════════════════════════╗
+      # ║  PHASE 8: CREATE FASTAPI CONTROLLER SERVER                                  ║
+      # ╚════════════════════════════════════════════════════════════════════════════╝
 
-      - name: Setup Complete Notification
+      - name: Create Claude Controller API Server
         run: |
-          echo "============================================"
-          echo "🎉 ANDROID SECURITY TESTING ENVIRONMENT READY"
-          echo "============================================"
-          echo "AVD: security_avd"
-          echo "Android API: ${{ inputs.android_api }}"
-          echo "Root Status: ${ROOT_AVAILABLE:-unknown}"
-          echo "============================================"
+          cat > /tmp/claude_controller_server.py << 'SERVERCODE'
+          #!/usr/bin/env python3
+          """
+          Claude Android Frida Controller - GitHub Actions Server
+          =========================================================
+          This FastAPI server provides the API endpoints that the Colab bridge
+          uses to control the Android emulator and Frida.
+          """
+          
+          import os
+          import sys
+          import json
+          import subprocess
+          import shutil
+          import traceback
+          import asyncio
+          from datetime import datetime
+          from typing import Optional, Dict, Any, List
+          from pathlib import Path
+          
+          from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Query
+          from fastapi.middleware.cors import CORSMiddleware
+          from fastapi.responses import FileResponse, JSONResponse
+          from pydantic import BaseModel
+          import psutil
+          
+          # ==================== CONFIGURATION ====================
+          
+          WORK_DIR = os.environ.get("WORK_DIR", "/tmp/android_security")
+          APK_DIR = os.environ.get("APK_DIR", "/tmp/android_security/apks")
+          OUTPUT_DIR = os.environ.get("OUTPUT_DIR", "/tmp/android_security/output")
+          SCRIPTS_DIR = os.environ.get("SCRIPTS_DIR", "/tmp/android_security/scripts")
+          LOGS_DIR = os.environ.get("LOGS_DIR", "/tmp/android_security/logs")
+          
+          # Ensure directories exist
+          for d in [WORK_DIR, APK_DIR, OUTPUT_DIR, SCRIPTS_DIR, LOGS_DIR]:
+              os.makedirs(d, exist_ok=True)
+          
+          # Track current APK
+          current_apk_path: Optional[str] = None
+          
+          # ==================== PYDANTIC MODELS ====================
+          
+          class CommandRequest(BaseModel):
+              command: str
+              timeout: Optional[int] = 300
+          
+          class DownloadRequest(BaseModel):
+              url: str
+              filename: Optional[str] = None
+          
+          class FridaScriptRequest(BaseModel):
+              script: str
+              package_name: str
+              spawn: bool = True
+          
+          # ==================== FASTAPI APP ====================
+          
+          app = FastAPI(
+              title="Claude Android Frida Controller",
+              description="GitHub Actions server for Android security testing",
+              version="4.0.0"
+          )
+          
+          app.add_middleware(
+              CORSMiddleware,
+              allow_origins=["*"],
+              allow_credentials=True,
+              allow_methods=["*"],
+              allow_headers=["*"],
+          )
+          
+          # ==================== HELPER FUNCTIONS ====================
+          
+          def run_command(cmd: str, timeout: int = 300) -> Dict[str, Any]:
+              """Run a shell command and return result"""
+              try:
+                  result = subprocess.run(
+                      cmd, shell=True, capture_output=True, text=True, timeout=timeout
+                  )
+                  return {
+                      "success": result.returncode == 0,
+                      "returncode": result.returncode,
+                      "stdout": result.stdout,
+                      "stderr": result.stderr
+                  }
+              except subprocess.TimeoutExpired:
+                  return {"success": False, "error": f"Command timed out after {timeout}s"}
+              except Exception as e:
+                  return {"success": False, "error": str(e)}
+          
+          def run_adb(cmd: str, timeout: int = 120) -> Dict[str, Any]:
+              """Run an ADB command"""
+              return run_command(f"adb {cmd}", timeout)
+          
+          def run_frida(args: str, timeout: int = 60) -> Dict[str, Any]:
+              """Run a Frida command"""
+              return run_command(f"frida {args}", timeout)
+          
+          # ==================== ROOT ENDPOINTS ====================
+          
+          @app.get("/")
+          def root():
+              return {
+                  "status": "online",
+                  "service": "Claude Android Frida Controller",
+                  "version": "4.0.0",
+                  "location": "GitHub Actions",
+                  "endpoints": {
+                      "health": "/health",
+                      "tools": "/tools",
+                      "apk": ["/apk/list", "/apk/info", "/apk/install", "/apk/patch", "/apk/decompile", "/apk/launch"],
+                      "frida": ["/frida/processes", "/frida/apps", "/frida/spawn", "/frida/attach", "/frida/script", "/frida/scripts"],
+                      "bypass": ["/frida/root-bypass", "/frida/ssl-bypass", "/frida/emulator-bypass", "/frida/all-bypass"],
+                      "adb": ["/adb/shell", "/adb/pull", "/adb/push"]
+                  }
+              }
+          
+          @app.get("/health")
+          def health():
+              """Comprehensive health check"""
+              # Check emulator
+              emu_result = run_adb("devices")
+              emulator_online = "emulator-" in emu_result.get("stdout", "")
+              
+              # Check boot status
+              boot_result = run_adb("shell getprop sys.boot_completed")
+              boot_completed = boot_result.get("stdout", "").strip() == "1"
+              
+              # Check Frida
+              frida_result = run_command("frida-ps -U 2>/dev/null | head -5")
+              frida_running = frida_result.get("success", False)
+              
+              # Check root
+              root_result = run_adb("shell su -c 'whoami' 2>/dev/null")
+              root_available = "root" in root_result.get("stdout", "")
+              
+              return {
+                  "status": "healthy" if emulator_online and boot_completed else "degraded",
+                  "emulator": "online" if emulator_online else "offline",
+                  "boot_completed": boot_completed,
+                  "frida_server": "running" if frida_running else "not_running",
+                  "root_available": root_available,
+                  "cpu_percent": psutil.cpu_percent(),
+                  "memory_percent": psutil.virtual_memory().percent,
+                  "disk_free_gb": round(psutil.disk_usage('/').free / (1024**3), 2),
+                  "timestamp": datetime.now().isoformat()
+              }
+          
+          @app.get("/tools")
+          def tools():
+              """List available tools and versions"""
+              tools_info = {}
+              
+              # Check each tool
+              checks = {
+                  "frida": "frida --version",
+                  "objection": "objection version 2>&1 | head -1",
+                  "apktool": "apktool --version 2>&1 | head -1",
+                  "jadx": "jadx --version 2>&1 | head -1",
+                  "adb": "adb version 2>&1 | head -1",
+                  "aapt": "aapt version 2>&1 | head -1"
+              }
+              
+              for tool, cmd in checks.items():
+                  result = run_command(cmd, timeout=10)
+                  if result.get("success"):
+                      tools_info[tool] = result.get("stdout", "").strip().split('\n')[0]
+                  else:
+                      tools_info[tool] = "not available"
+              
+              return {"success": True, "tools": tools_info}
+          
+          # ==================== APK ENDPOINTS ====================
+          
+          @app.post("/upload")
+          async def upload_apk(file: UploadFile = File(...)):
+              """Upload an APK file"""
+              global current_apk_path
+              
+              filepath = os.path.join(APK_DIR, file.filename)
+              with open(filepath, "wb") as f:
+                  content = await file.read()
+                  f.write(content)
+              
+              current_apk_path = filepath
+              size_mb = os.path.getsize(filepath) / (1024 * 1024)
+              
+              return {
+                  "success": True,
+                  "filepath": filepath,
+                  "filename": file.filename,
+                  "size_mb": round(size_mb, 2)
+              }
+          
+          @app.post("/download")
+          def download_apk(request: DownloadRequest):
+              """Download APK from URL"""
+              global current_apk_path
+              
+              filename = request.filename or request.url.split('/')[-1].split('?')[0]
+              if not filename.endswith('.apk'):
+                  filename += '.apk'
+              
+              filepath = os.path.join(APK_DIR, filename)
+              
+              result = run_command(f'wget -q -O "{filepath}" "{request.url}"', timeout=600)
+              
+              if os.path.exists(filepath) and os.path.getsize(filepath) > 0:
+                  current_apk_path = filepath
+                  return {
+                      "success": True,
+                      "filepath": filepath,
+                      "size_mb": round(os.path.getsize(filepath) / (1024*1024), 2)
+                  }
+              else:
+                  return {"success": False, "error": "Download failed", "details": result}
+          
+          @app.get("/apk/list")
+          def list_apks():
+              """List available APKs"""
+              apks = []
+              if os.path.exists(APK_DIR):
+                  for f in os.listdir(APK_DIR):
+                      if f.endswith('.apk'):
+                          path = os.path.join(APK_DIR, f)
+                          apks.append({
+                              "name": f,
+                              "path": path,
+                              "size_mb": round(os.path.getsize(path) / (1024*1024), 2)
+                          })
+              return {"success": True, "apks": apks, "current": current_apk_path}
+          
+          @app.get("/apk/info")
+          def apk_info(path: str = None):
+              """Get APK information using aapt and androguard"""
+              apk_path = path or current_apk_path
+              if not apk_path or not os.path.exists(apk_path):
+                  return {"success": False, "error": "No APK specified or found"}
+              
+              info = {"path": apk_path}
+              
+              # Use aapt for basic info
+              aapt_result = run_command(f'aapt dump badging "{apk_path}" 2>/dev/null | head -20')
+              if aapt_result.get("success"):
+                  output = aapt_result.get("stdout", "")
+                  # Parse package name
+                  for line in output.split('\n'):
+                      if line.startswith("package:"):
+                          parts = line.split("'")
+                          if len(parts) >= 2:
+                              info["package"] = parts[1]
+                          if "versionName=" in line:
+                              for p in line.split():
+                                  if p.startswith("versionName="):
+                                      info["version"] = p.split("'")[1]
+              
+              # Get permissions
+              perm_result = run_command(f'aapt dump permissions "{apk_path}" 2>/dev/null')
+              if perm_result.get("success"):
+                  perms = []
+                  for line in perm_result.get("stdout", "").split('\n'):
+                      if "uses-permission:" in line:
+                          perm = line.split("'")[1] if "'" in line else line.split()[-1]
+                          perms.append(perm)
+                  info["permissions"] = perms
+              
+              info["success"] = True
+              return info
+          
+          @app.post("/apk/install")
+          def install_apk(path: str = None):
+              """Install APK on emulator"""
+              apk_path = path or current_apk_path
+              if not apk_path or not os.path.exists(apk_path):
+                  return {"success": False, "error": "No APK specified or found"}
+              
+              result = run_adb(f'install -r -g "{apk_path}"', timeout=180)
+              return {
+                  "success": "Success" in result.get("stdout", "") or result.get("success", False),
+                  "path": apk_path,
+                  "output": result.get("stdout", "") + result.get("stderr", "")
+              }
+          
+          @app.post("/apk/patch")
+          def patch_apk(path: str = None):
+              """Patch APK with Frida gadget using objection"""
+              apk_path = path or current_apk_path
+              if not apk_path or not os.path.exists(apk_path):
+                  return {"success": False, "error": "No APK specified or found"}
+              
+              result = run_command(f'objection patchapk -s "{apk_path}"', timeout=600)
+              
+              # Find patched APK
+              patched_path = apk_path.replace('.apk', '.objection.apk')
+              if os.path.exists(patched_path):
+                  return {"success": True, "original": apk_path, "patched": patched_path}
+              
+              return {"success": False, "error": "Patching failed", "details": result}
+          
+          @app.post("/apk/decompile")
+          def decompile_apk(path: str = None):
+              """Decompile APK using apktool"""
+              apk_path = path or current_apk_path
+              if not apk_path or not os.path.exists(apk_path):
+                  return {"success": False, "error": "No APK specified or found"}
+              
+              output_dir = os.path.join(OUTPUT_DIR, Path(apk_path).stem + "_decompiled")
+              
+              result = run_command(f'apktool d -f -o "{output_dir}" "{apk_path}"', timeout=300)
+              
+              if os.path.exists(output_dir):
+                  return {"success": True, "apk": apk_path, "output_dir": output_dir}
+              
+              return {"success": False, "error": "Decompilation failed", "details": result}
+          
+          @app.post("/apk/launch")
+          def launch_app(package: str):
+              """Launch app on emulator"""
+              # Get launcher activity
+              result = run_adb(f'shell cmd package resolve-activity --brief {package} | tail -1')
+              activity = result.get("stdout", "").strip()
+              
+              if activity and "/" in activity:
+                  launch_result = run_adb(f'shell am start -n {activity}')
+              else:
+                  # Try monkey
+                  launch_result = run_adb(f'shell monkey -p {package} -c android.intent.category.LAUNCHER 1')
+              
+              return {
+                  "success": launch_result.get("success", False),
+                  "package": package,
+                  "activity": activity,
+                  "output": launch_result.get("stdout", "") + launch_result.get("stderr", "")
+              }
+          
+          # ==================== FRIDA ENDPOINTS ====================
+          
+          @app.get("/frida/processes")
+          def frida_processes():
+              """List running processes"""
+              result = run_command("frida-ps -U", timeout=30)
+              if result.get("success"):
+                  lines = result.get("stdout", "").strip().split('\n')
+                  processes = []
+                  for line in lines[1:]:  # Skip header
+                      parts = line.split()
+                      if len(parts) >= 2:
+                          processes.append({"pid": parts[0], "name": ' '.join(parts[1:])})
+                  return {"success": True, "processes": processes}
+              return {"success": False, "error": result.get("error", "Failed to get processes")}
+          
+          @app.get("/frida/apps")
+          def frida_apps():
+              """List installed apps"""
+              result = run_command("frida-ps -Ua", timeout=30)
+              if result.get("success"):
+                  lines = result.get("stdout", "").strip().split('\n')
+                  apps = []
+                  for line in lines[1:]:  # Skip header
+                      parts = line.split()
+                      if len(parts) >= 3:
+                          apps.append({
+                              "pid": parts[0],
+                              "name": parts[1],
+                              "identifier": ' '.join(parts[2:])
+                          })
+                  return {"success": True, "apps": apps}
+              return {"success": False, "error": result.get("error", "Failed to get apps")}
+          
+          @app.post("/frida/spawn")
+          def frida_spawn(package_name: str, script_path: str = None):
+              """Spawn app with Frida"""
+              cmd = f'frida -U -f {package_name}'
+              if script_path and os.path.exists(script_path):
+                  cmd += f' -l "{script_path}"'
+              cmd += ' --no-pause -q &'
+              
+              result = run_command(cmd, timeout=30)
+              return {
+                  "success": True,
+                  "package": package_name,
+                  "script": script_path,
+                  "output": result.get("stdout", "") + result.get("stderr", "")
+              }
+          
+          @app.post("/frida/attach")
+          def frida_attach(package_name: str):
+              """Attach Frida to running app"""
+              result = run_command(f'frida -U {package_name} -q &', timeout=30)
+              return {
+                  "success": True,
+                  "package": package_name,
+                  "output": result.get("stdout", "") + result.get("stderr", "")
+              }
+          
+          @app.post("/frida/script")
+          def frida_script(request: FridaScriptRequest):
+              """Run custom Frida script"""
+              # Save script to temp file
+              script_path = os.path.join(SCRIPTS_DIR, f"custom_{datetime.now().strftime('%Y%m%d_%H%M%S')}.js")
+              with open(script_path, 'w') as f:
+                  f.write(request.script)
+              
+              if request.spawn:
+                  cmd = f'timeout 60 frida -U -f {request.package_name} -l "{script_path}" --no-pause 2>&1 || true'
+              else:
+                  cmd = f'timeout 60 frida -U {request.package_name} -l "{script_path}" 2>&1 || true'
+              
+              result = run_command(cmd, timeout=120)
+              
+              return {
+                  "success": True,
+                  "package": request.package_name,
+                  "spawn": request.spawn,
+                  "script_path": script_path,
+                  "output": result.get("stdout", "") + result.get("stderr", "")
+              }
+          
+          @app.get("/frida/scripts")
+          def frida_scripts():
+              """List available Frida scripts"""
+              scripts = []
+              if os.path.exists(SCRIPTS_DIR):
+                  for f in os.listdir(SCRIPTS_DIR):
+                      if f.endswith('.js'):
+                          scripts.append({
+                              "name": f,
+                              "path": os.path.join(SCRIPTS_DIR, f)
+                          })
+              return {"success": True, "scripts": scripts}
+          
+          # ==================== BYPASS ENDPOINTS ====================
+          
+          def run_bypass(package_name: str, script_name: str, spawn: bool = True) -> Dict[str, Any]:
+              """Helper to run bypass scripts"""
+              script_path = os.path.join(SCRIPTS_DIR, script_name)
+              if not os.path.exists(script_path):
+                  return {"success": False, "error": f"Script not found: {script_path}"}
+              
+              if spawn:
+                  cmd = f'frida -U -f {package_name} -l "{script_path}" --no-pause &'
+              else:
+                  cmd = f'frida -U {package_name} -l "{script_path}" &'
+              
+              result = run_command(cmd, timeout=30)
+              return {
+                  "success": True,
+                  "package": package_name,
+                  "bypass": script_name,
+                  "spawn": spawn,
+                  "output": result.get("stdout", "") + result.get("stderr", "")
+              }
+          
+          @app.post("/frida/root-bypass")
+          def root_bypass(package_name: str, spawn: bool = True):
+              """Apply root detection bypass"""
+              return run_bypass(package_name, "root_bypass.js", spawn)
+          
+          @app.post("/frida/ssl-bypass")
+          def ssl_bypass(package_name: str, spawn: bool = True):
+              """Apply SSL pinning bypass"""
+              return run_bypass(package_name, "ssl_bypass.js", spawn)
+          
+          @app.post("/frida/emulator-bypass")
+          def emulator_bypass(package_name: str, spawn: bool = True):
+              """Apply emulator detection bypass"""
+              return run_bypass(package_name, "emulator_bypass.js", spawn)
+          
+          @app.post("/frida/frida-bypass")
+          def frida_detection_bypass(package_name: str, spawn: bool = True):
+              """Apply Frida detection bypass"""
+              return run_bypass(package_name, "frida_bypass.js", spawn)
+          
+          @app.post("/frida/all-bypass")
+          def all_bypass(package_name: str, spawn: bool = True):
+              """Apply ALL bypasses"""
+              return run_bypass(package_name, "all_bypass.js", spawn)
+          
+          # ==================== ADB ENDPOINTS ====================
+          
+          @app.post("/adb/shell")
+          def adb_shell(request: CommandRequest):
+              """Execute ADB shell command"""
+              result = run_adb(f'shell {request.command}', timeout=request.timeout)
+              return result
+          
+          @app.post("/adb/pull")
+          def adb_pull(remote: str, local: str = None):
+              """Pull file from emulator"""
+              if not local:
+                  local = os.path.join(OUTPUT_DIR, os.path.basename(remote))
+              
+              result = run_adb(f'pull "{remote}" "{local}"')
+              
+              if os.path.exists(local):
+                  return {"success": True, "remote": remote, "local": local}
+              return {"success": False, "error": "Pull failed", "details": result}
+          
+          @app.post("/adb/push")
+          def adb_push(local: str, remote: str):
+              """Push file to emulator"""
+              if not os.path.exists(local):
+                  return {"success": False, "error": f"Local file not found: {local}"}
+              
+              result = run_adb(f'push "{local}" "{remote}"')
+              return {
+                  "success": result.get("success", False),
+                  "local": local,
+                  "remote": remote,
+                  "output": result.get("stdout", "") + result.get("stderr", "")
+              }
+          
+          # ==================== MAIN ====================
+          
+          if __name__ == "__main__":
+              import uvicorn
+              port = int(os.environ.get("SERVER_PORT", 8000))
+              print(f"Starting Claude Android Frida Controller on port {port}")
+              uvicorn.run(app, host="0.0.0.0", port=port, log_level="info")
+          SERVERCODE
+          
+          chmod +x /tmp/claude_controller_server.py
+          echo "✅ Claude Controller API server created"
+
+      # ╔════════════════════════════════════════════════════════════════════════════╗
+      # ║  PHASE 9: SETUP NGROK AND START SERVER                                      ║
+      # ╚════════════════════════════════════════════════════════════════════════════╝
+
+      - name: Setup ngrok
+        run: |
+          echo "=== Installing ngrok ==="
+          curl -s https://ngrok-agent.s3.amazonaws.com/ngrok.asc | sudo tee /etc/apt/trusted.gpg.d/ngrok.asc >/dev/null
+          echo "deb https://ngrok-agent.s3.amazonaws.com buster main" | sudo tee /etc/apt/sources.list.d/ngrok.list
+          sudo apt-get update -qq && sudo apt-get install -y -qq ngrok
+          
+          # Configure ngrok with auth token from secrets
+          if [ -n "${{ secrets.NGROK_AUTH_TOKEN }}" ]; then
+            ngrok config add-authtoken ${{ secrets.NGROK_AUTH_TOKEN }}
+            echo "✅ ngrok configured with auth token"
+          else
+            echo "⚠️ NGROK_AUTH_TOKEN secret not set - ngrok may have limitations"
+          fi
+
+      - name: Start API Server and ngrok Tunnel
+        run: |
+          echo "=== Starting Claude Controller API Server ==="
+          
+          # Start the FastAPI server
+          cd /tmp
+          nohup python3 claude_controller_server.py > $LOGS_DIR/server.log 2>&1 &
+          SERVER_PID=$!
+          echo "Server PID: $SERVER_PID"
+          echo "SERVER_PID=$SERVER_PID" >> $GITHUB_ENV
+          
+          # Wait for server to start
+          sleep 5
+          
+          # Verify server is running
+          curl -s http://localhost:${{ inputs.server_port }}/health || {
+            echo "Server may still be starting..."
+            sleep 5
+            curl -s http://localhost:${{ inputs.server_port }}/health
+          }
+          
+          echo "=== Starting ngrok Tunnel ==="
+          nohup ngrok http ${{ inputs.server_port }} --log=stdout > $LOGS_DIR/ngrok.log 2>&1 &
+          NGROK_PID=$!
+          echo "ngrok PID: $NGROK_PID"
+          echo "NGROK_PID=$NGROK_PID" >> $GITHUB_ENV
+          
+          # Wait for ngrok to establish tunnel
+          sleep 10
+          
+          # Get public URL
+          NGROK_URL=""
+          for i in {1..10}; do
+            NGROK_URL=$(curl -s http://localhost:4040/api/tunnels 2>/dev/null | jq -r '.tunnels[0].public_url' 2>/dev/null || echo "")
+            if [ -n "$NGROK_URL" ] && [ "$NGROK_URL" != "null" ]; then
+              break
+            fi
+            echo "Waiting for ngrok tunnel... attempt $i"
+            sleep 3
+          done
+          
+          if [ -z "$NGROK_URL" ] || [ "$NGROK_URL" == "null" ]; then
+            echo "⚠️ Could not get ngrok URL automatically"
+            echo "Check ngrok dashboard or logs"
+            cat $LOGS_DIR/ngrok.log | tail -50
+          else
+            echo "NGROK_URL=$NGROK_URL" >> $GITHUB_ENV
+          fi
+          
+          echo "✅ Server and tunnel started"
+
+      - name: Display Connection Information
+        run: |
+          echo ""
+          echo "╔════════════════════════════════════════════════════════════════════════════╗"
+          echo "║  🎉 CLAUDE ANDROID FRIDA CONTROLLER IS READY!                              ║"
+          echo "╠════════════════════════════════════════════════════════════════════════════╣"
+          echo "║                                                                            ║"
+          
+          if [ -n "$NGROK_URL" ]; then
+            echo "║  📡 PUBLIC URL: $NGROK_URL"
+            echo "║                                                                            ║"
+            echo "║  📋 Use this URL to connect from Google Colab:                            ║"
+            echo "║     POST $NGROK_URL/workflow/connect                             ║"
+            echo "║     Body: {\"url\": \"$NGROK_URL\"}                      ║"
+          else
+            echo "║  ⚠️  ngrok URL not available - check logs                                 ║"
+            echo "║  Try: curl http://localhost:4040/api/tunnels                              ║"
+          fi
+          
+          echo "║                                                                            ║"
+          echo "║  📖 API Documentation: ${NGROK_URL:-http://localhost:${{ inputs.server_port }}}/docs                              ║"
+          echo "║                                                                            ║"
+          echo "║  🔧 Available Endpoints:                                                   ║"
+          echo "║     GET  /health          - System health check                            ║"
+          echo "║     GET  /tools           - Available tools                                ║"
+          echo "║     POST /apk/install     - Install APK                                    ║"
+          echo "║     POST /frida/all-bypass - Launch with all bypasses                      ║"
+          echo "║     POST /adb/shell       - Execute ADB command                            ║"
+          echo "║                                                                            ║"
+          echo "║  ⏱️  Session Duration: ${{ inputs.session_duration }} minutes                                     ║"
+          echo "║  📱 Android API: ${{ inputs.android_api }}                                                       ║"
+          echo "║  🔓 Root Status: ${ROOT_AVAILABLE:-unknown}                                             ║"
+          echo "║                                                                            ║"
+          echo "╚════════════════════════════════════════════════════════════════════════════╝"
+          echo ""
+          
+          # Also display in job summary
+          echo "## 🤖 Claude Android Frida Controller" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Connection Information" >> $GITHUB_STEP_SUMMARY
+          echo "- **Public URL**: \`${NGROK_URL:-Not available}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **API Docs**: ${NGROK_URL:-http://localhost:${{ inputs.server_port }}}/docs" >> $GITHUB_STEP_SUMMARY
+          echo "- **Android API**: ${{ inputs.android_api }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Session Duration**: ${{ inputs.session_duration }} minutes" >> $GITHUB_STEP_SUMMARY
+          echo "- **Root Status**: ${ROOT_AVAILABLE:-unknown}" >> $GITHUB_STEP_SUMMARY
+
+      # ╔════════════════════════════════════════════════════════════════════════════╗
+      # ║  PHASE 10: KEEP SESSION ALIVE                                               ║
+      # ╚════════════════════════════════════════════════════════════════════════════╝
+
+      - name: Keep Session Alive
+        run: |
+          echo "=== Session Active ==="
+          echo "Session will run for ${{ inputs.session_duration }} minutes"
+          echo "Press Ctrl+C in the workflow to stop early"
+          echo ""
+          
+          SESSION_SECONDS=$(( ${{ inputs.session_duration }} * 60 ))
+          START_TIME=$(date +%s)
+          
+          while true; do
+            CURRENT_TIME=$(date +%s)
+            ELAPSED=$((CURRENT_TIME - START_TIME))
+            REMAINING=$((SESSION_SECONDS - ELAPSED))
+            
+            if [ $ELAPSED -ge $SESSION_SECONDS ]; then
+              echo ""
+              echo "⏰ Session time expired"
+              break
+            fi
+            
+            # Status update every 60 seconds
+            REMAINING_MIN=$((REMAINING / 60))
+            echo "[$(date '+%H:%M:%S')] Session active | ${REMAINING_MIN}m remaining | Emulator: $(adb devices | grep -c emulator || echo 0) | URL: ${NGROK_URL:-local}"
+            
+            # Health check
+            curl -s http://localhost:${{ inputs.server_port }}/health > /dev/null 2>&1 || {
+              echo "⚠️ Server health check failed - restarting..."
+              cd /tmp && python3 claude_controller_server.py &
+              sleep 5
+            }
+            
+            sleep 60
+          done
+          
+          echo "=== Session Ended ==="
+
+      - name: Cleanup
+        if: always()
+        run: |
+          echo "=== Cleaning up ==="
+          
+          # Kill processes
+          kill $SERVER_PID 2>/dev/null || true
+          kill $NGROK_PID 2>/dev/null || true
+          kill $EMULATOR_PID 2>/dev/null || true
+          
+          # Save logs
+          echo "=== Server Log ===" 
+          cat $LOGS_DIR/server.log 2>/dev/null | tail -100 || true
+          
+          echo "=== ngrok Log ==="
+          cat $LOGS_DIR/ngrok.log 2>/dev/null | tail -50 || true
+          
+          echo "✅ Cleanup completed"
